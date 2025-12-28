@@ -120,6 +120,9 @@ export default function App() {
 
   // Hover state for nav tabs (makes theme feel alive)
   const [hoveredTab, setHoveredTab] = useState(null);
+  // Mobile: hamburger menu state could go here if needed
+  const [menuOpen, setMenuOpen] = useState(false);
+
 
   // Auto-save whenever state changes
   React.useEffect(() => {
@@ -164,13 +167,24 @@ export default function App() {
               </div>
 
               {/* ✅ Added UserButton next to your existing Reset button */}
-              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+              <div className="gts-headerActions" style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                {/* Mobile hamburger (CSS will show only on phones) */}
+                <button
+                  className="gts-menuBtn"
+                  type="button"
+                  onClick={() => setMenuOpen((v) => !v)}
+                  aria-expanded={menuOpen}
+                  aria-label="Open menu"
+                  style={styles.resetBtn}
+                >
+                  ☰ Menu
+                </button>
+
                 <UserButton />
+
                 <button
                   onClick={() => setAppState(resetState())}
                   style={styles.resetBtn}
-                  onMouseEnter={() => setHoveredTab("reset")}
-                  onMouseLeave={() => setHoveredTab(null)}
                   title="Dev only"
                 >
                   Reset App (Dev)
@@ -180,6 +194,28 @@ export default function App() {
 
             <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
           </header>
+
+          {/* Mobile menu panel (CSS will position + show only on phones) */}
+          {menuOpen && (
+            <div className="gts-menuPanel">
+              {tabs.map((t) => {
+                const isActive = activeTab === t.key;
+                return (
+                  <button
+                    key={t.key}
+                    className={`gts-menuItem ${isActive ? "isActive" : ""}`}
+                    type="button"
+                    onClick={() => {
+                      setActiveTab(t.key);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    {t.label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
 
           <main style={styles.main}>{Page}</main>
 
@@ -191,7 +227,10 @@ export default function App() {
               return (
                 <button
                   key={t.key}
-                  onClick={() => setActiveTab(t.key)}
+                  onClick={() => {
+                    setActiveTab(t.key);
+                    setMenuOpen(false);
+                  }}
                   style={tabButtonStyle({ active: isActive, hovered: isHovered })}
                   onMouseEnter={() => setHoveredTab(t.key)}
                   onMouseLeave={() => setHoveredTab(null)}

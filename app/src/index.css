@@ -43,6 +43,19 @@ a:hover {
   display: none !important;
 }
 
+/* =========================
+   Mobile Hamburger Nav (Gateway to Service)
+   ========================= */
+
+/* Default: desktop/tablet behavior */
+.gts-menuBtn {
+  display: none; /* hidden on desktop */
+}
+
+.gts-menuPanel {
+  display: none; /* hidden unless mobile + menuOpen */
+}
+
 /* OPTIONAL: Mobile responsiveness hooks (safe to keep here) */
 .gts-nav {
   overflow-x: auto;
@@ -79,4 +92,45 @@ a:hover {
     padding: 12px !important;
     padding-bottom: 96px !important;
   }
+
+  .gts-nav {
+    display: none !important; /* hide bottom tab bar on phones */
+  }
+
+  .gts-menuBtn {
+    display: inline-flex !important; /* show hamburger on phones */
+    align-items: center;
+    gap: 8px;
+  }
+
+  .gts-menuPanel {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+
+    margin: 10px 10px 0 10px;
+    padding: 12px;
+
+    border: 1px solid #e2e6ea;
+    border-radius: 14px;
+    background: #ffffff;
+    box-shadow: 0 6px 20px rgba(36, 52, 71, 0.08);
+  }
+
+  .gts-menuItem {
+    text-align: left;
+    padding: 12px 12px;
+    border-radius: 12px;
+    border: 1px solid rgba(36, 52, 71, 0.18);
+    background: transparent;
+    color: #243447;
+    font-weight: 800;
+    cursor: pointer;
+  }
+
+  .gts-menuItem.isActive {
+    border: 1px solid rgba(74, 143, 139, 0.55);
+    background: rgba(74, 143, 139, 0.12);
+  }
 }
+
