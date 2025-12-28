@@ -73,6 +73,15 @@ a:hover {
   scrollbar-width: none;
 }
 
+/* ✅ Global: prevent input/select overflow on mobile (and everywhere) */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+input, select, textarea, button {
+  max-width: 100%;
+}
+
 @media (max-width: 520px) {
   .gts-header {
     margin: 10px !important;
@@ -168,6 +177,11 @@ a:hover {
   .v-checkboxRow input[type="checkbox"] {
     width: 18px;
     height: 18px;
+  }
+
+  /* Labels and grid items must be allowed to shrink */
+  .v-form label {
+    min-width: 0;
   }
 }
 
