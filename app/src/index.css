@@ -54,6 +54,15 @@ button:focus-visible {
   outline: 4px auto -webkit-focus-ring-color;
 }
 
+/* Clerk: hide "Don't have an account? Sign up" footer */
+.cl-footer,
+.cl-footerAction,
+.cl-footerActionText,
+.cl-footerActionLink {
+  display: none !important;
+}
+
+
 @media (prefers-color-scheme: light) {
   :root {
     color: #213547;

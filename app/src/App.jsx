@@ -7,6 +7,9 @@ import ExportImportPage from "./pages/ExportImportPage.jsx";
 import PastMeetingsPage from "./pages/PastMeetingsPage.jsx"; // ✅ ADD BACK
 import { loadState, resetState, saveState } from "./state/storage.js";
 
+// ✅ Clerk Auth (added)
+import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
+
 const MISSION =
   "Gateway to Service exists to help members show up for Friday Night service at Gateway, ensuring the responsibility of coordinating the list can be easily passed on to the next service member.";
 
@@ -22,6 +25,46 @@ const THEME = {
   muted: "#6B7280",
   shadow: "0 1px 10px rgba(36, 52, 71, 0.06)",
 };
+
+// ✅ Access restricted screen (added)
+function AccessRestricted() {
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: 24,
+        background: "#111827",
+        color: "#F9FAFB",
+        textAlign: "center",
+      }}
+    >
+      <h2 style={{ marginBottom: 8 }}>Access Restricted</h2>
+      <p style={{ maxWidth: 520, opacity: 0.9, lineHeight: 1.5 }}>
+        This portal is for approved list coordinators only. If you are interested in
+        volunteering, please contact the list coordinator.
+        andrew@gatewaytosevice.com
+      </p>
+
+      <div style={{ marginTop: 18, width: "min(420px, 100%)" }}>
+        {/* No sign-up; hash routing works without React Router */}
+        <SignIn
+          routing="hash"
+          signUpUrl={null}
+          appearance={{
+            elements: {
+              footer: "hidden",
+            },
+          }}
+        />
+
+      </div>
+    </div>
+  );
+}
 
 // Tab button styling (outlined by default, teal tint when active/hover)
 function tabButtonStyle({ active, hovered }) {
@@ -101,53 +144,66 @@ export default function App() {
     }
   })();
 
+  // ✅ Wrap existing app UI with Clerk gating (added; nothing removed)
   return (
-    <div style={styles.app}>
-      <header style={styles.header}>
-        {/* Banner block */}
-        <div style={styles.brandRow}>
-          <div style={styles.brandLeft}>
-            <div style={styles.brandTitle}>Gateway to Service</div>
-            <div style={styles.brandSubtitle}>
-              {appState.settings.mission || MISSION}
+    <>
+      <SignedOut>
+        <AccessRestricted />
+      </SignedOut>
+
+      <SignedIn>
+        <div style={styles.app}>
+          <header style={styles.header}>
+            {/* Banner block */}
+            <div style={styles.brandRow}>
+              <div style={styles.brandLeft}>
+                <div style={styles.brandTitle}>Gateway to Service</div>
+                <div style={styles.brandSubtitle}>
+                  {appState.settings.mission || MISSION}
+                </div>
+              </div>
+
+              {/* ✅ Added UserButton next to your existing Reset button */}
+              <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                <UserButton />
+                <button
+                  onClick={() => setAppState(resetState())}
+                  style={styles.resetBtn}
+                  onMouseEnter={() => setHoveredTab("reset")}
+                  onMouseLeave={() => setHoveredTab(null)}
+                  title="Dev only"
+                >
+                  Reset App (Dev)
+                </button>
+              </div>
             </div>
-          </div>
 
-          <button
-            onClick={() => setAppState(resetState())}
-            style={styles.resetBtn}
-            onMouseEnter={() => setHoveredTab("reset")}
-            onMouseLeave={() => setHoveredTab(null)}
-            title="Dev only"
-          >
-            Reset App (Dev)
-          </button>
+            <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
+          </header>
+
+          <main style={styles.main}>{Page}</main>
+
+          <nav style={styles.nav}>
+            {tabs.map((t) => {
+              const isActive = activeTab === t.key;
+              const isHovered = hoveredTab === t.key;
+
+              return (
+                <button
+                  key={t.key}
+                  onClick={() => setActiveTab(t.key)}
+                  style={tabButtonStyle({ active: isActive, hovered: isHovered })}
+                  onMouseEnter={() => setHoveredTab(t.key)}
+                  onMouseLeave={() => setHoveredTab(null)}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
-
-        <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
-      </header>
-
-      <main style={styles.main}>{Page}</main>
-
-      <nav style={styles.nav}>
-        {tabs.map((t) => {
-          const isActive = activeTab === t.key;
-          const isHovered = hoveredTab === t.key;
-
-          return (
-            <button
-              key={t.key}
-              onClick={() => setActiveTab(t.key)}
-              style={tabButtonStyle({ active: isActive, hovered: isHovered })}
-              onMouseEnter={() => setHoveredTab(t.key)}
-              onMouseLeave={() => setHoveredTab(null)}
-            >
-              {t.label}
-            </button>
-          );
-        })}
-      </nav>
-    </div>
+      </SignedIn>
+    </>
   );
 }
 
