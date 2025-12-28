@@ -167,8 +167,17 @@ export default function App() {
               </div>
 
               {/* ✅ Added UserButton next to your existing Reset button */}
-              <div className="gts-headerActions" style={{ display: "flex", gap: 10, alignItems: "center" }}>
-                {/* Mobile hamburger (CSS will show only on phones) */}
+              {/* Header actions: mobile menu + user + reset */}
+              <div
+                className="gts-headerActions"
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "center",
+                  flexWrap: "wrap",
+                }}
+              >
+                {/* Mobile hamburger (CSS controls visibility) */}
                 <button
                   className="gts-menuBtn"
                   type="button"
@@ -180,8 +189,10 @@ export default function App() {
                   ☰ Menu
                 </button>
 
+                {/* Clerk user menu */}
                 <UserButton />
 
+                {/* Dev reset button */}
                 <button
                   onClick={() => setAppState(resetState())}
                   style={styles.resetBtn}
@@ -192,6 +203,7 @@ export default function App() {
               </div>
             </div>
 
+            
             <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
           </header>
 
@@ -219,7 +231,7 @@ export default function App() {
 
           <main style={styles.main}>{Page}</main>
 
-          <nav style={styles.nav}>
+          <nav className="gts-nav" style={styles.nav}>
             {tabs.map((t) => {
               const isActive = activeTab === t.key;
               const isHovered = hoveredTab === t.key;
