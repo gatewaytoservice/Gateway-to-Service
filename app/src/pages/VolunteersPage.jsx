@@ -108,8 +108,12 @@ export default function VolunteersPage({ appState, setAppState }) {
 
       <section style={styles.card}>
         <div style={{ fontWeight: 900, marginBottom: 6 }}>Add Volunteer</div>
-
-        <form onSubmit={addVolunteer} style={{ display: "grid", gap: 10 }}>
+      {/* Volunteer Form */}
+        <form
+          onSubmit={addVolunteer}
+          className="v-form"
+          style={{ display: "grid", gap: 10 }}
+        >
           <label style={styles.label}>
             Name
             <input
@@ -145,7 +149,7 @@ export default function VolunteersPage({ appState, setAppState }) {
             </select>
           </label>
 
-          <label style={styles.checkboxRow}>
+          <label className="v-checkboxRow" style={styles.checkboxRow}>
             <input
               type="checkbox"
               checked={firstTime}

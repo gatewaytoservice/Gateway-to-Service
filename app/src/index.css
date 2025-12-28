@@ -153,5 +153,21 @@ a:hover {
     flex: 1 1 140px;      /* grows, wraps */
     max-width: 100%;
   }
+
+  .v-form {
+    gap: 12px;
+  }
+
+  .v-checkboxRow {
+    padding: 8px 10px;
+    border: 1px solid rgba(0, 0, 0, 0.10);
+    border-radius: 12px;
+    background: #fff;
+  }
+
+  .v-checkboxRow input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+  }
 }
 
