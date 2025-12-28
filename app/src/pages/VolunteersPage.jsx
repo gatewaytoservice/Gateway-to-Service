@@ -158,7 +158,7 @@ export default function VolunteersPage({ appState, setAppState }) {
             First-time volunteer
           </label>
 
-          <button type="submit" style={styles.primaryBtn}>
+          <button type="submit" className="v-submitBtn" style={styles.primaryBtn}>
             Add Volunteer
           </button>
         </form>

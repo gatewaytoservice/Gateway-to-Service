@@ -82,6 +82,23 @@ input, select, textarea, button {
   max-width: 100%;
 }
 
+/* Volunteers: prevent any global button styles from creating weird blocks */
+.v-form .v-submitBtn {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  line-height: 1;
+}
+
+/* Volunteers: ensure form controls never visually overflow */
+.v-form input,
+.v-form select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
+
 @media (max-width: 520px) {
   .gts-header {
     margin: 10px !important;
