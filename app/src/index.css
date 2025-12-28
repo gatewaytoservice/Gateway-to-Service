@@ -13,6 +13,15 @@
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* FIX: global baseline text/background */
+html, body {
+  margin: 0;
+  padding: 0;
+  background: #FAFAFA;
+  color: #243447;
+}
+
+
 a {
   font-weight: 500;
   color: #646cff;
