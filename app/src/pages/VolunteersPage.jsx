@@ -103,7 +103,7 @@ export default function VolunteersPage({ appState, setAppState }) {
 
 
   return (
-    <div>
+     <div className="v-page">
       <h2 style={{ marginTop: 0 }}>Volunteers</h2>
 
       <section style={styles.card}>
@@ -173,9 +173,10 @@ export default function VolunteersPage({ appState, setAppState }) {
             No volunteers yet. Add your first person above.
           </div>
         ) : (
-          <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
+          // Roster List Wrapper
+          <div className="v-list" style={{ marginTop: 10, display: "grid", gap: 10 }}>
             {volunteers.map((v) => (
-              <div key={v.id} style={styles.volRow}>
+              <div key={v.id} className="v-card" style={styles.volRow}>
                 <div style={{ minWidth: 0 }}>
                   <div style={{ fontWeight: 900, lineHeight: 1.2 }}>
                     {v.name}{" "}
@@ -193,7 +194,7 @@ export default function VolunteersPage({ appState, setAppState }) {
                   </div>
                 </div>
 
-                <div style={styles.actions}>
+                <div className="v-actions" style={styles.actions}>
                   <button
                     onClick={() => toggleActive(v.id)}
                     style={styles.smallBtn}

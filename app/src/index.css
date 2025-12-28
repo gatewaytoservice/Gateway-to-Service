@@ -132,5 +132,26 @@ a:hover {
     border: 1px solid rgba(74, 143, 139, 0.55);
     background: rgba(74, 143, 139, 0.12);
   }
+  /* Each volunteer becomes a stacked "card" */
+  .v-card {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Actions become a wrapping row instead of a skinny column */
+  .v-actions {
+    min-width: 0 !important;
+    display: flex !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    justify-content: flex-start !important;
+  }
+
+  /* Buttons/select share space nicely */
+  .v-actions button,
+  .v-actions select {
+    flex: 1 1 140px;      /* grows, wraps */
+    max-width: 100%;
+  }
 }
 
