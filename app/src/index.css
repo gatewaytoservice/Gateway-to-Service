@@ -200,5 +200,33 @@ input, select, textarea, button {
   .v-form label {
     min-width: 0;
   }
+
+  .coordinatorPage {
+    padding-bottom: 24px; /* avoid extra blank space */
+  }
+
+  /* Stack “info left + actions right” vertically */
+  .coordinatorRow {
+    flex-direction: column !important;
+    align-items: stretch !important;
+  }
+
+  /* Actions stop forcing width; become a 2-col grid */
+  .coordinatorActions {
+    min-width: 0 !important;
+    width: 100% !important;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  /* Make status pill span full width in actions grid */
+  .coordinatorActions > span {
+    grid-column: 1 / -1;
+  }
+
+  /* Buttons/selects fill their grid cells */
+  .coordinatorActions button,
+  .coordinatorActions select {
+    width: 100%;
+  }
 }
 
