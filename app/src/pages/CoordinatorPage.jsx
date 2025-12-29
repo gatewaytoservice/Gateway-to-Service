@@ -55,7 +55,6 @@
 // - Step 21: Volunteer Status Safety (WARNINGS ONLY — no blocking)
 
 // src/pages/CoordinatorPage.jsx
-// src/pages/CoordinatorPage.jsx
 import React, { useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
@@ -743,7 +742,10 @@ export default function CoordinatorPage({ appState, setAppState }) {
   // UI
   // =========================
   return (
-    <div style={{ background: THEME.bg, minHeight: "100vh", paddingBottom: 30 }}>
+    <div
+      className="coordinatorPage"
+      style={{ background: THEME.bg, minHeight: "100vh", paddingBottom: 30 }}
+    >
       <h2 style={{ marginTop: 0, color: THEME.navy }}>This Friday</h2>
 
       {/* KEY (Legend) */}
@@ -964,6 +966,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
                 return (
                   <div
                     key={inv.id}
+                    className="coordinatorRow"
                     style={{
                       ...styles.invRow,
                       ...rowAccentStyle(inv.status),
@@ -978,7 +981,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
                       <SafetyNotes v={v} />
                     </div>
 
-                    <div style={styles.invActions}>
+                    <div className="coordinatorActions" style={styles.invActions}>
                       <span style={basePillStyle(inv.status)}>{inv.status}</span>
 
                       {inv.status === "Not Invited" ? (
@@ -1093,7 +1096,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
           ) : (
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
               {suggestedNextUp.map(({ v, inCooldown, eligibleISO }) => (
-                <div key={v.id} style={styles.invRow}>
+                <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
 
@@ -1159,7 +1162,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
                   return a.name.localeCompare(b.name);
                 })
                 .map((v) => (
-                  <div key={v.id} style={styles.invRow}>
+                  <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
                       <div style={{ fontSize: 12, color: THEME.muted, marginTop: 2 }}>
@@ -1206,7 +1209,11 @@ export default function CoordinatorPage({ appState, setAppState }) {
                 if (!v) return null;
 
                 return (
-                  <div key={inv.id} style={{ ...styles.invRow, ...rowAccentStyle("Confirmed") }}>
+                  <div
+                    key={inv.id}
+                    className="coordinatorRow"
+                    style={{ ...styles.invRow, ...rowAccentStyle("Confirmed") }}
+                  >
                     <div>
                       <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
                       <div style={{ fontSize: 12, color: THEME.muted }}>{v.phone}</div>
@@ -1262,7 +1269,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
             ) : (
               <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
                 {eligibleLastMinute.map((v) => (
-                  <div key={v.id} style={styles.invRow}>
+                  <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
                       <div style={{ fontSize: 12, color: THEME.muted, marginTop: 2 }}>
