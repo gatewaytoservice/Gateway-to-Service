@@ -58,6 +58,9 @@
 import React, { useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
+// ✅ NEW (Option 2 rotation)
+import { sortInviteCandidates } from "../utils/rotation.js";
+
 const CORE_ROLE_ORDER = [
   "Chairperson",
   "List Coordinator",
@@ -542,6 +545,14 @@ export default function CoordinatorPage({ appState, setAppState }) {
         status: "Invited",
         inviteSentAt: nowISO,
       });
+
+      // ✅ NEW (safe): stamp lastInvitedAt on volunteer (date-only)
+      setAppState((prev) => ({
+        ...prev,
+        volunteers: prev.volunteers.map((v) =>
+          v.id === volunteerId ? { ...v, lastInvitedAt: fridayISO } : v
+        ),
+      }));
     }
 
     if (kind === "followUp") {
@@ -675,52 +686,20 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   // =========================
-  // Step 18: Suggested Next Up
+  // Step 18: Suggested Next Up (✅ Option 2 rotation)
   // =========================
   const suggestedNextUp = useMemo(() => {
     if (!week) return [];
 
-    const candidates = appState.volunteers
-      .filter((v) => v.active && !inviteByVolunteerId.has(v.id))
-      .map((v) => {
-        const confirmEligibleISO = v.lastConfirmedDate
-          ? addWeeksISO(v.lastConfirmedDate, cooldownAfterConfirmWeeks)
-          : null;
+    const excludeIds = new Set(week.invites.map((i) => i.volunteerId));
 
-        const declineEligibleISO = v.lastDeclinedDate
-          ? addWeeksISO(v.lastDeclinedDate, cooldownAfterDeclineWeeks)
-          : null;
-
-        const eligibleISO = maxISO(confirmEligibleISO, declineEligibleISO);
-        const inCooldown = eligibleISO ? fridayISO < eligibleISO : false;
-
-        const lastServed = v.lastConfirmedDate || "0000-00-00";
-        const lastDeclined = v.lastDeclinedDate || "0000-00-00";
-
-        return { v, inCooldown, eligibleISO, lastServed, lastDeclined };
-      });
-
-    candidates.sort((a, b) => {
-      if (a.inCooldown !== b.inCooldown) return a.inCooldown ? 1 : -1;
-      if (a.lastServed !== b.lastServed) return a.lastServed.localeCompare(b.lastServed);
-      if (a.lastDeclined !== b.lastDeclined) return a.lastDeclined.localeCompare(b.lastDeclined);
-
-      const ra = roleRank(getRole(a.v));
-      const rb = roleRank(getRole(b.v));
-      if (ra !== rb) return ra - rb;
-
-      return a.v.name.localeCompare(b.v.name);
+    // Default cadence is monthly for anyone missing inviteCadence
+    return sortInviteCandidates(appState.volunteers, fridayISO, {
+      excludeIds,
+      defaultCadence: "monthly",
+      onlyActive: true,
     });
-
-    return candidates;
-  }, [
-    appState.volunteers,
-    week,
-    inviteByVolunteerId,
-    fridayISO,
-    cooldownAfterConfirmWeeks,
-    cooldownAfterDeclineWeeks,
-  ]);
+  }, [appState.volunteers, week, fridayISO]);
 
   // Step 21: tiny UI helper renderer for safety notes
   function SafetyNotes({ v }) {
@@ -1095,7 +1074,8 @@ export default function CoordinatorPage({ appState, setAppState }) {
             </div>
           ) : (
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-              {suggestedNextUp.map(({ v, inCooldown, eligibleISO }) => (
+              {/* ✅ UPDATED: uses eligibleNow instead of inCooldown */}
+              {suggestedNextUp.map(({ v, eligibleNow, eligibleISO }) => (
                 <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
@@ -1106,7 +1086,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
 
                     <SafetyNotes v={v} />
 
-                    {!inCooldown ? (
+                    {eligibleNow ? (
                       <div style={{ marginTop: 6, fontSize: 12, fontWeight: 900, color: THEME.navy }}>
                         Ready ✅
                       </div>

@@ -19,11 +19,28 @@ function getRole(v) {
   return v.coreRole || "Volunteer";
 }
 
+// ✅ Invite cadence options (Option 2 rotation)
+const CADENCE_OPTIONS = [
+  { value: "weekly", label: "Weekly" },
+  { value: "biweekly", label: "Biweekly" },
+  { value: "monthly", label: "Monthly" },
+  { value: "quarterly", label: "Quarterly" },
+  { value: "yearly", label: "Yearly" },
+];
+
+function getCadence(v) {
+  // Default existing volunteers to monthly unless set
+  return v.inviteCadence || "monthly";
+}
+
 export default function VolunteersPage({ appState, setAppState }) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [role, setRole] = useState("Volunteer");
   const [firstTime, setFirstTime] = useState(false);
+
+  // ✅ Add Volunteer form cadence (defaults to monthly)
+  const [cadence, setCadence] = useState("monthly");
 
   const volunteers = appState.volunteers;
 
@@ -45,11 +62,15 @@ export default function VolunteersPage({ appState, setAppState }) {
       id: crypto.randomUUID(),
       name: trimmedName,
       phone: trimmedPhone,
-      coreRole: role, // we keep the same field name to avoid refactors
+      coreRole: role,
       firstTime: Boolean(firstTime),
       active: true,
       lastConfirmedDate: null,
       lastDeclinedDate: null,
+
+      // ✅ new fields
+      inviteCadence: cadence || "monthly",
+      lastInvitedAt: null,
     };
 
     setAppState((prev) => ({
@@ -62,6 +83,7 @@ export default function VolunteersPage({ appState, setAppState }) {
     setPhone("");
     setRole("Volunteer");
     setFirstTime(false);
+    setCadence("monthly");
   }
 
   function toggleActive(volunteerId) {
@@ -91,6 +113,16 @@ export default function VolunteersPage({ appState, setAppState }) {
     }));
   }
 
+  // ✅ NEW: update cadence per volunteer
+  function updateVolunteerCadence(volunteerId, inviteCadence) {
+    setAppState((prev) => ({
+      ...prev,
+      volunteers: prev.volunteers.map((v) =>
+        v.id === volunteerId ? { ...v, inviteCadence } : v
+      ),
+    }));
+  }
+
   function deleteVolunteer(volunteerId) {
     const ok = confirm("Delete this volunteer? This cannot be undone.");
     if (!ok) return;
@@ -101,14 +133,13 @@ export default function VolunteersPage({ appState, setAppState }) {
     }));
   }
 
-
   return (
-     <div className="v-page">
+    <div className="v-page">
       <h2 style={{ marginTop: 0 }}>Volunteers</h2>
 
       <section style={styles.card}>
         <div style={{ fontWeight: 900, marginBottom: 6 }}>Add Volunteer</div>
-      {/* Volunteer Form */}
+        {/* Volunteer Form */}
         <form
           onSubmit={addVolunteer}
           className="v-form"
@@ -144,6 +175,22 @@ export default function VolunteersPage({ appState, setAppState }) {
               {ROLE_OPTIONS.map((r) => (
                 <option key={r} value={r}>
                   {r}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          {/* ✅ NEW: Cadence (defaults monthly) */}
+          <label style={styles.label}>
+            Invite Cadence
+            <select
+              value={cadence}
+              onChange={(e) => setCadence(e.target.value)}
+              style={styles.input}
+            >
+              {CADENCE_OPTIONS.map((c) => (
+                <option key={c.value} value={c.value}>
+                  {c.label}
                 </option>
               ))}
             </select>
@@ -185,31 +232,30 @@ export default function VolunteersPage({ appState, setAppState }) {
                   <div style={{ fontWeight: 900, lineHeight: 1.2 }}>
                     {v.name}{" "}
                     {!v.active ? (
-                      <span style={{ fontSize: 12, opacity: 0.7 }}>
-                        (Paused)
-                      </span>
+                      <span style={{ fontSize: 12, opacity: 0.7 }}>(Paused)</span>
                     ) : null}
                   </div>
+
                   <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
                     {v.phone}
                   </div>
+
                   <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
                     Role: {getRole(v)} • First-time: {v.firstTime ? "Yes" : "No"}
+                  </div>
+
+                  {/* ✅ NEW: show cadence on the left (nice for scanning) */}
+                  <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
+                    Cadence: {CADENCE_OPTIONS.find((c) => c.value === getCadence(v))?.label || "Monthly"}
                   </div>
                 </div>
 
                 <div className="v-actions" style={styles.actions}>
-                  <button
-                    onClick={() => toggleActive(v.id)}
-                    style={styles.smallBtn}
-                  >
+                  <button onClick={() => toggleActive(v.id)} style={styles.smallBtn}>
                     {v.active ? "Pause" : "Activate"}
                   </button>
 
-                  <button
-                    onClick={() => toggleFirstTime(v.id)}
-                    style={styles.smallBtn}
-                  >
+                  <button onClick={() => toggleFirstTime(v.id)} style={styles.smallBtn}>
                     Toggle 1st
                   </button>
 
@@ -222,6 +268,20 @@ export default function VolunteersPage({ appState, setAppState }) {
                     {ROLE_OPTIONS.map((r) => (
                       <option key={r} value={r}>
                         {r}
+                      </option>
+                    ))}
+                  </select>
+
+                  {/* ✅ NEW: Cadence dropdown per volunteer */}
+                  <select
+                    value={getCadence(v)}
+                    onChange={(e) => updateVolunteerCadence(v.id, e.target.value)}
+                    style={styles.smallSelect}
+                    title="Set invite cadence"
+                  >
+                    {CADENCE_OPTIONS.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
                       </option>
                     ))}
                   </select>
