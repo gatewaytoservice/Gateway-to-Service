@@ -490,17 +490,17 @@ const styles = {
     display: "grid",
     gap: 6,
     fontWeight: 800,
-    fontSize: 12,
+    fontSize: 14,
     opacity: 0.95,
   },
 
   // ✅ IMPORTANT: 16px prevents mobile iOS zoom on focus
   input: {
     width: "100%",
-    padding: 10,
-    borderRadius: 10,
+    padding: 12,      // was 10
+    borderRadius: 12, // was 10
     border: "1px solid rgba(0,0,0,0.12)",
-    fontSize: 16,
+    fontSize: 14,     // was 14 (better on mobile)
   },
 
   checkboxRow: {
@@ -508,16 +508,17 @@ const styles = {
     alignItems: "center",
     gap: 10,
     fontWeight: 800,
+    fontSize: 14,     // add this
   },
 
   primaryBtn: {
     width: "100%",
-    padding: "12px 10px",
+    padding: "14px 12px", // was "12px 10px"
     borderRadius: 12,
     border: "1px solid rgba(0,0,0,0.18)",
     background: "white",
-    fontWeight: 900,
-    fontSize: 14,
+    fontWeight: 800,
+    fontSize: 14,          // add this
   },
 
   volRow: {
@@ -526,31 +527,31 @@ const styles = {
     justifyContent: "space-between",
     border: "1px solid rgba(0,0,0,0.10)",
     borderRadius: 12,
-    padding: 10,
+    padding: 12,           // was 10
   },
 
   actions: {
-    display: "grid",
-    gap: 8,
-    minWidth: 160,
+     display: "grid",
+    gap: 8,                // was 6
+    minWidth: 160,         // was 140
   },
 
   smallBtn: {
-    padding: "10px 12px",
-    borderRadius: 10,
+    padding: "10px 12px",  // was "8px 10px"
+    borderRadius: 12,      // was 10
     border: "1px solid rgba(0,0,0,0.12)",
     background: "white",
-    fontWeight: 800,
-    fontSize: 14,
+    fontWeight: 800,       // was 800
+    fontSize: 14,          // was 12
   },
 
   smallSelect: {
-    padding: "10px 12px",
-    borderRadius: 10,
+    padding: "10px 12px",  // was "8px 10px"
+    borderRadius: 12,      // was 10
     border: "1px solid rgba(0,0,0,0.12)",
     background: "white",
-    fontWeight: 800,
-    fontSize: 14,
+    fontWeight: 800,       // was 800
+    fontSize: 14,          // was 12
   },
 
   // ✅ Inline Edit/Delete row — larger + even + padded from sides
