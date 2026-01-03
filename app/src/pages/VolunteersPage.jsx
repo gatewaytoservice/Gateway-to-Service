@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useState, useEffect } from "react";
 
 // Roles relevant to Gateway to Service (community-specific, not generic)
 // NOTE: "Volunteer" is the default role so people always show up.
@@ -41,6 +41,32 @@ export default function VolunteersPage({ appState, setAppState }) {
 
   // ✅ Add Volunteer form cadence (defaults to monthly)
   const [cadence, setCadence] = useState("monthly");
+
+  // =========================
+  // ✅ NEW: Edit Modal State
+  // =========================
+  const [editModal, setEditModal] = useState({
+    open: false,
+    volunteerId: null,
+    draft: {
+      name: "",
+      phone: "",
+      coreRole: "Volunteer",
+      inviteCadence: "monthly",
+      firstTime: false,
+      active: true,
+    },
+  });
+
+  // Lock background scroll when modal open (mobile-friendly)
+  useEffect(() => {
+    if (!editModal.open) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [editModal.open]);
 
   const volunteers = appState.volunteers;
 
@@ -127,10 +153,89 @@ export default function VolunteersPage({ appState, setAppState }) {
     const ok = confirm("Delete this volunteer? This cannot be undone.");
     if (!ok) return;
 
+    // If deleting the one being edited, close modal safely
+    if (editModal.open && editModal.volunteerId === volunteerId) {
+      setEditModal({
+        open: false,
+        volunteerId: null,
+        draft: {
+          name: "",
+          phone: "",
+          coreRole: "Volunteer",
+          inviteCadence: "monthly",
+          firstTime: false,
+          active: true,
+        },
+      });
+    }
+
     setAppState((prev) => ({
       ...prev,
       volunteers: prev.volunteers.filter((v) => v.id !== volunteerId),
     }));
+  }
+
+  // =========================
+  // ✅ NEW: Modal open/save/close
+  // =========================
+  function openEditModal(v) {
+    setEditModal({
+      open: true,
+      volunteerId: v.id,
+      draft: {
+        name: v.name || "",
+        phone: v.phone || "",
+        coreRole: getRole(v),
+        inviteCadence: getCadence(v),
+        firstTime: !!v.firstTime,
+        active: !!v.active,
+      },
+    });
+  }
+
+  function closeEditModal() {
+    setEditModal({
+      open: false,
+      volunteerId: null,
+      draft: {
+        name: "",
+        phone: "",
+        coreRole: "Volunteer",
+        inviteCadence: "monthly",
+        firstTime: false,
+        active: true,
+      },
+    });
+  }
+
+  function saveEditModal() {
+    const { volunteerId, draft } = editModal;
+    if (!volunteerId) return;
+
+    const trimmedName = (draft.name || "").trim();
+    const trimmedPhone = (draft.phone || "").trim();
+
+    if (!trimmedName) return alert("Please enter a name.");
+    if (!trimmedPhone) return alert("Please enter a phone number.");
+
+    setAppState((prev) => ({
+      ...prev,
+      volunteers: prev.volunteers.map((v) =>
+        v.id === volunteerId
+          ? {
+              ...v,
+              name: trimmedName,
+              phone: trimmedPhone,
+              coreRole: draft.coreRole,
+              inviteCadence: draft.inviteCadence,
+              firstTime: !!draft.firstTime,
+              active: !!draft.active,
+            }
+          : v
+      ),
+    }));
+
+    closeEditModal();
   }
 
   return (
@@ -244,9 +349,10 @@ export default function VolunteersPage({ appState, setAppState }) {
                     Role: {getRole(v)} • First-time: {v.firstTime ? "Yes" : "No"}
                   </div>
 
-                  {/* ✅ NEW: show cadence on the left (nice for scanning) */}
+                  {/* ✅ show cadence on the left (nice for scanning) */}
                   <div style={{ fontSize: 12, opacity: 0.8, marginTop: 2 }}>
-                    Cadence: {CADENCE_OPTIONS.find((c) => c.value === getCadence(v))?.label || "Monthly"}
+                    Cadence:{" "}
+                    {CADENCE_OPTIONS.find((c) => c.value === getCadence(v))?.label || "Monthly"}
                   </div>
                 </div>
 
@@ -272,7 +378,7 @@ export default function VolunteersPage({ appState, setAppState }) {
                     ))}
                   </select>
 
-                  {/* ✅ NEW: Cadence dropdown per volunteer */}
+                  {/* ✅ Cadence dropdown per volunteer */}
                   <select
                     value={getCadence(v)}
                     onChange={(e) => updateVolunteerCadence(v.id, e.target.value)}
@@ -286,21 +392,159 @@ export default function VolunteersPage({ appState, setAppState }) {
                     ))}
                   </select>
 
-                  <button
-                    onClick={() => deleteVolunteer(v.id)}
-                    style={{
-                      ...styles.smallBtn,
-                      borderColor: "rgba(0,0,0,0.25)",
-                    }}
-                  >
-                    Delete
-                  </button>
+                  {/* ✅ NEW: Edit + Delete inline */}
+                  <div style={styles.inlineBtnRow}>
+                    <button
+                      onClick={() => openEditModal(v)}
+                      style={styles.smallBtn}
+                      title="Edit volunteer"
+                    >
+                      Edit
+                    </button>
+
+                    <button
+                      onClick={() => deleteVolunteer(v.id)}
+                      style={{
+                        ...styles.smallBtn,
+                        borderColor: "rgba(0,0,0,0.25)",
+                      }}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ))}
           </div>
         )}
       </section>
+
+      {/* =========================
+          ✅ EDIT MODAL
+         ========================= */}
+      {editModal.open ? (
+        <div style={styles.modalBackdrop} onClick={closeEditModal}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.row}>
+              <div style={{ fontWeight: 950 }}>Edit Volunteer</div>
+              <button onClick={closeEditModal} style={styles.smallBtn}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              <label style={styles.label}>
+                Name
+                <input
+                  value={editModal.draft.name}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, name: e.target.value },
+                    }))
+                  }
+                  style={styles.input}
+                  autoFocus
+                />
+              </label>
+
+              <label style={styles.label}>
+                Phone
+                <input
+                  value={editModal.draft.phone}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, phone: e.target.value },
+                    }))
+                  }
+                  style={styles.input}
+                />
+              </label>
+
+              <label style={styles.label}>
+                Role
+                <select
+                  value={editModal.draft.coreRole}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, coreRole: e.target.value },
+                    }))
+                  }
+                  style={styles.input}
+                >
+                  {ROLE_OPTIONS.map((r) => (
+                    <option key={r} value={r}>
+                      {r}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={styles.label}>
+                Invite Cadence
+                <select
+                  value={editModal.draft.inviteCadence}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, inviteCadence: e.target.value },
+                    }))
+                  }
+                  style={styles.input}
+                >
+                  {CADENCE_OPTIONS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label style={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={!!editModal.draft.firstTime}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, firstTime: e.target.checked },
+                    }))
+                  }
+                />
+                First-time volunteer
+              </label>
+
+              <label style={styles.checkboxRow}>
+                <input
+                  type="checkbox"
+                  checked={!!editModal.draft.active}
+                  onChange={(e) =>
+                    setEditModal((m) => ({
+                      ...m,
+                      draft: { ...m.draft, active: e.target.checked },
+                    }))
+                  }
+                />
+                Active (unchecked = Paused)
+              </label>
+
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button onClick={saveEditModal} style={styles.primaryBtn}>
+                  Save Changes
+                </button>
+                <button
+                  onClick={closeEditModal}
+                  style={{ ...styles.primaryBtn, borderColor: "rgba(0,0,0,0.25)" }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -375,5 +619,33 @@ const styles = {
     background: "white",
     fontWeight: 800,
     fontSize: 12,
+  },
+  inlineBtnRow: {
+    display: "flex",
+    gap: 6,
+  },
+
+  // ✅ Modal styles (scrollable on mobile)
+  modalBackdrop: {
+    position: "fixed",
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    background: "rgba(0,0,0,0.35)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    zIndex: 999,
+  },
+  modalCard: {
+    width: "min(720px, 100%)",
+    maxHeight: "85vh",
+    overflowY: "auto",
+    background: "white",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.12)",
+    padding: 14,
   },
 };
