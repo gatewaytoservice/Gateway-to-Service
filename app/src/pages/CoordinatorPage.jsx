@@ -55,7 +55,7 @@
 // - Step 21: Volunteer Status Safety (WARNINGS ONLY — no blocking)
 
 // src/pages/CoordinatorPage.jsx
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
 // ✅ NEW (Option 2 rotation)
@@ -351,6 +351,19 @@ export default function CoordinatorPage({ appState, setAppState }) {
     name: "",
     message: "",
   });
+
+  useEffect(() => {
+  const anyModalOpen = showLastMinute || smsModal.open;
+  if (!anyModalOpen) return;
+
+  const prev = document.body.style.overflow;
+  document.body.style.overflow = "hidden";
+
+  return () => {
+    document.body.style.overflow = prev;
+  };
+}, [showLastMinute, smsModal.open]);
+
 
   // Cooldown settings (fallback defaults)
   const cooldownAfterConfirmWeeks = appState.settings.cooldownAfterConfirmWeeks ?? 2;
@@ -1490,17 +1503,28 @@ const styles = {
     right: 0,
     bottom: 0,
     background: "rgba(0,0,0,0.35)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
+    // IMPORTANT: allow the overlay to scroll on mobile
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    // IMPORTANT: don't vertically center tall modals (they become unscrollable)
+    display: "block",
     padding: 16,
     zIndex: 999,
   },
+
   modalCard: {
     width: "min(720px, 100%)",
     background: THEME.card,
     borderRadius: 14,
     border: `1px solid ${THEME.border}`,
     padding: 14,
+
+    // IMPORTANT: make the card scrollable when content is tall
+    maxHeight: "calc(100vh - 32px)",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+
+    // Center horizontally since backdrop is now display:block
+    margin: "16px auto",
   },
 };
