@@ -711,7 +711,10 @@ export default function CoordinatorPage({ appState, setAppState }) {
       excludeIds,
       defaultCadence: "monthly",
       onlyActive: true,
+      cooldownAfterConfirmWeeks,
+      cooldownAfterDeclineWeeks,
     });
+
   }, [appState.volunteers, week, fridayISO]);
 
   // Step 21: tiny UI helper renderer for safety notes

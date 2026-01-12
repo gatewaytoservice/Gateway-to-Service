@@ -1,6 +1,13 @@
 // src/utils/rotation.js
 // Option 2: Cadence + Rotation ordering (pure helpers)
-// ✅ Cadence eligibility is based on lastInvitedAt (NOT lastConfirmedDate)
+//
+// ✅ Cadence eligibility is based on the most recent "touch":
+//    lastInvitedAt OR lastConfirmedDate (whichever is later)
+//
+// Why:
+// - If someone is Confirmed (served) but lastInvitedAt wasn't stamped (older data / edge cases),
+//   they still should respect cadence cooldown.
+// - This puts BOTH Invited + Confirmed "into play" for cadence behavior.
 
 const CORE_ROLES_NO_COOLDOWN = new Set([
   "Chairperson",
@@ -51,6 +58,12 @@ export function normalizeISODate(isoOrTs) {
   return s.length >= 10 ? s.slice(0, 10) : null;
 }
 
+function maxISO(a, b) {
+  if (!a) return b;
+  if (!b) return a;
+  return a >= b ? a : b;
+}
+
 // ---- Cadence helpers ----
 export function getCadenceKey(v, defaultKey = "monthly") {
   const key = (v?.inviteCadence || "").toLowerCase().trim();
@@ -73,18 +86,22 @@ export function getCooldownDaysForVolunteer(v, defaultCadence = "monthly") {
   return def ? def.cooldownDays : 21; // fallback to monthly
 }
 
-// ✅ Eligible date is based on lastInvitedAt (invite frequency), not attendance.
+// ✅ Eligible date is based on most recent "touch":
+//    lastInvitedAt OR lastConfirmedDate (whichever is later)
 export function getEligibleISO(v, fridayISO, defaultCadence = "monthly") {
   const cooldownDays = getCooldownDaysForVolunteer(v, defaultCadence);
 
   if (cooldownDays === 0) return fridayISO;
 
   const lastInvited = normalizeISODate(v?.lastInvitedAt);
+  const lastConfirmed = normalizeISODate(v?.lastConfirmedDate);
 
-  // Never invited -> eligible now
-  if (!lastInvited) return fridayISO;
+  const lastTouch = maxISO(lastInvited, lastConfirmed);
 
-  return addDaysISO(lastInvited, cooldownDays);
+  // Never invited/confirmed -> eligible now
+  if (!lastTouch) return fridayISO;
+
+  return addDaysISO(lastTouch, cooldownDays);
 }
 
 export function isEligibleThisWeek(v, fridayISO, defaultCadence = "monthly") {
@@ -96,16 +113,12 @@ export function isEligibleThisWeek(v, fridayISO, defaultCadence = "monthly") {
 // ---- Ordering rules (invite rotation spirit) ----
 // 1) Weekly cadence first
 // 2) Eligible first (not in cadence cooldown)
-// 3) Never invited first
-// 4) Then by lastInvitedAt (oldest invite first)
+// 3) Never touched (no invite/confirm history) first
+// 4) Then by lastTouch (oldest touch first) for cadence fairness
 // 5) Then by lastConfirmedDate (oldest attendance first) as a secondary fairness tie-break
 // 6) Name tie-break
 export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
-  const {
-    excludeIds = new Set(),
-    defaultCadence = "monthly",
-    onlyActive = true,
-  } = opts;
+  const { excludeIds = new Set(), defaultCadence = "monthly", onlyActive = true } = opts;
 
   const list = (volunteers || [])
     .filter((v) => (onlyActive ? !!v.active : true))
@@ -117,10 +130,12 @@ export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
       const eligibleNow = isEligibleThisWeek(v, fridayISO, defaultCadence);
 
       const lastInvited = normalizeISODate(v?.lastInvitedAt);
-      const neverInvited = !lastInvited;
-      const lastInvitedSort = lastInvited || "0000-00-00";
-
       const lastConfirmed = normalizeISODate(v?.lastConfirmedDate);
+
+      const lastTouch = maxISO(lastInvited, lastConfirmed);
+      const neverTouched = !lastTouch;
+      const lastTouchSort = lastTouch || "0000-00-00";
+
       const lastConfirmedSort = lastConfirmed || "0000-00-00";
 
       return {
@@ -128,8 +143,8 @@ export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
         cadence,
         eligibleISO,
         eligibleNow,
-        neverInvited,
-        lastInvitedSort,
+        neverTouched,
+        lastTouchSort,
         lastConfirmedSort,
       };
     });
@@ -144,12 +159,12 @@ export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
     // 2) Eligible first
     if (a.eligibleNow !== b.eligibleNow) return a.eligibleNow ? -1 : 1;
 
-    // 3) Never invited first
-    if (a.neverInvited !== b.neverInvited) return a.neverInvited ? -1 : 1;
+    // 3) Never touched first
+    if (a.neverTouched !== b.neverTouched) return a.neverTouched ? -1 : 1;
 
-    // 4) Oldest lastInvitedAt first
-    if (a.lastInvitedSort !== b.lastInvitedSort) {
-      return a.lastInvitedSort.localeCompare(b.lastInvitedSort);
+    // 4) Oldest lastTouch first
+    if (a.lastTouchSort !== b.lastTouchSort) {
+      return a.lastTouchSort.localeCompare(b.lastTouchSort);
     }
 
     // 5) Oldest lastConfirmedDate first (secondary fairness)
