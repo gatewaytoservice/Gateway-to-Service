@@ -58,8 +58,13 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
-// ✅ NEW (Option 2 rotation)
-import { sortInviteCandidates } from "../utils/rotation.js";
+// ✅ Option 2 rotation (cadence + last touch)
+import {
+  sortInviteCandidates,
+  isEligibleThisWeek,
+  getCadenceKey,
+  buildAutoWeekInviteIds,
+} from "../utils/rotation.js";
 
 const CORE_ROLE_ORDER = [
   "Chairperson",
@@ -259,26 +264,19 @@ function rowAccentStyle(status) {
 
 // =========================
 // Step 21 — Volunteer Status Safety (WARNINGS ONLY)
+// CLEANED: no extra eligible/cooldown dates shown on cards
 // =========================
-function getEligibilityISOForVolunteer(v, cooldownAfterConfirmWeeks, cooldownAfterDeclineWeeks) {
-  const confirmEligibleISO = v.lastConfirmedDate
-    ? addWeeksISO(v.lastConfirmedDate, cooldownAfterConfirmWeeks)
-    : null;
-
-  const declineEligibleISO = v.lastDeclinedDate
-    ? addWeeksISO(v.lastDeclinedDate, cooldownAfterDeclineWeeks)
-    : null;
-
-  return maxISO(confirmEligibleISO, declineEligibleISO);
-}
-
 function servedLastWeek(fridayISO, lastConfirmedDate) {
   if (!lastConfirmedDate) return false;
   const lastWeekISO = addWeeksISO(fridayISO, -1);
   return lastConfirmedDate === lastWeekISO;
 }
 
-function getSafetyNotes(v, fridayISO, cooldownAfterConfirmWeeks, cooldownAfterDeclineWeeks) {
+// "Recently declined" window (warning only)
+// This is not a cooldown system — it’s just clarity.
+const RECENT_DECLINE_WEEKS = 2;
+
+function getSafetyNotes(v, fridayISO) {
   const notes = [];
 
   if (servedLastWeek(fridayISO, v.lastConfirmedDate)) {
@@ -286,21 +284,18 @@ function getSafetyNotes(v, fridayISO, cooldownAfterConfirmWeeks, cooldownAfterDe
   }
 
   if (v.lastDeclinedDate) {
-    const declineEligibleISO = addWeeksISO(v.lastDeclinedDate, cooldownAfterDeclineWeeks);
-    const stillInDeclineWindow = fridayISO < declineEligibleISO;
-    if (stillInDeclineWindow) {
+    const declineWindowEnd = addWeeksISO(v.lastDeclinedDate, RECENT_DECLINE_WEEKS);
+    if (fridayISO < declineWindowEnd) {
       notes.push(`Recently declined (${formatFriendlyDate(v.lastDeclinedDate)})`);
     }
   }
 
-  const eligibleISO = getEligibilityISOForVolunteer(
-    v,
-    cooldownAfterConfirmWeeks,
-    cooldownAfterDeclineWeeks
-  );
-  const inCooldown = eligibleISO ? fridayISO < eligibleISO : false;
-  if (inCooldown) {
-    notes.push(`Cooldown — eligible on ${formatFriendlyDate(eligibleISO)}`);
+  // Cadence-based “not due yet” warning (NO date spam)
+  // Uses last touch (invite/confirm/decline) + cadence windows from rotation.js
+  const eligibleNow = isEligibleThisWeek(v, fridayISO, "monthly");
+  if (!eligibleNow) {
+    const cadenceKey = getCadenceKey(v, "monthly");
+    notes.push(`Not due yet (${cadenceKey})`);
   }
 
   return notes;
@@ -353,19 +348,18 @@ export default function CoordinatorPage({ appState, setAppState }) {
   });
 
   useEffect(() => {
-  const anyModalOpen = showLastMinute || smsModal.open;
-  if (!anyModalOpen) return;
+    const anyModalOpen = showLastMinute || smsModal.open;
+    if (!anyModalOpen) return;
 
-  const prev = document.body.style.overflow;
-  document.body.style.overflow = "hidden";
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
 
-  return () => {
-    document.body.style.overflow = prev;
-  };
-}, [showLastMinute, smsModal.open]);
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [showLastMinute, smsModal.open]);
 
-
-  // Cooldown settings (fallback defaults)
+  // NOTE: Keeping these settings for compatibility (NO longer used for safety-date spam)
   const cooldownAfterConfirmWeeks = appState.settings.cooldownAfterConfirmWeeks ?? 2;
   const cooldownAfterDeclineWeeks = appState.settings.cooldownAfterDeclineWeeks ?? 3;
 
@@ -404,17 +398,94 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }, [appState.volunteers, week, inviteByVolunteerId]);
 
   // =========================
-  // A) Week creation
+  // A) Week creation (UPDATED: auto-build initial list)
   // =========================
   function createWeekIfMissing() {
     if (week) return;
+
+    // Target list size: preferredConfirmed (default 12), capped by maxVolunteers (default 14)
+    const preferred = appState.settings.preferredConfirmed ?? 12;
+    const maxVols = appState.settings.maxVolunteers ?? 14;
+    const targetCount = Math.min(preferred, maxVols);
+
+    // ✅ Auto-build invite IDs directly here (so it works even if a helper misbehaves)
+    const used = new Set();
+    const initialIds = [];
+
+    const pushId = (id) => {
+      if (!id) return;
+      if (used.has(id)) return;
+      used.add(id);
+      initialIds.push(id);
+    };
+
+    // 1) Pinned core roles (assigned + active)
+    for (const role of CORE_ROLE_ORDER) {
+      const v = appState.volunteers.find((x) => x.active && (x.coreRole || "") === role);
+      if (v) pushId(v.id);
+      if (initialIds.length >= targetCount) break;
+    }
+
+    // 2) Weekly cadence volunteers (active)
+    if (initialIds.length < targetCount) {
+      const weekly = appState.volunteers
+        .filter((v) => v.active && getCadenceKey(v, "monthly") === "weekly")
+        .sort((a, b) => {
+          const ra = roleRank(getRole(a));
+          const rb = roleRank(getRole(b));
+          if (ra !== rb) return ra - rb;
+          return (a.name || "").localeCompare(b.name || "");
+        });
+
+      for (const v of weekly) {
+        if (initialIds.length >= targetCount) break;
+        pushId(v.id);
+      }
+    }
+
+    // 3) Fill remaining using rotation ordering (cadence + last touch)
+    if (initialIds.length < targetCount) {
+      const candidates = sortInviteCandidates(appState.volunteers, fridayISO, {
+        excludeIds: used,
+        defaultCadence: "monthly",
+        onlyActive: true,
+      });
+
+      for (const item of candidates) {
+        if (initialIds.length >= targetCount) break;
+        pushId(item.v?.id);
+      }
+    }
+
+    // (Optional) If you still want to keep the imported helper in play,
+    // you can fall back to it only if we somehow got nothing.
+    if (initialIds.length === 0 && typeof buildAutoWeekInviteIds === "function") {
+      const fallbackIds = buildAutoWeekInviteIds(appState.volunteers, fridayISO, {
+        targetCount,
+        defaultCadence: "monthly",
+        pinnedRoles: CORE_ROLE_ORDER,
+      });
+      for (const id of fallbackIds || []) {
+        if (initialIds.length >= targetCount) break;
+        pushId(id);
+      }
+    }
+
+    const initialInvites = initialIds.map((volunteerId) => ({
+      id: crypto.randomUUID(),
+      volunteerId,
+      status: "Not Invited",
+      inviteSentAt: null,
+      followUpSentAt: null,
+      responseAt: null,
+    }));
 
     const newWeek = {
       id: crypto.randomUUID(),
       date: fridayISO,
       neededCount: appState.settings.maxVolunteers,
       finalized: false,
-      invites: [],
+      invites: initialInvites, // ✅ auto-created list
     };
 
     setAppState((prev) => ({
@@ -559,7 +630,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
         inviteSentAt: nowISO,
       });
 
-      // ✅ NEW (safe): stamp lastInvitedAt on volunteer (date-only)
+      // stamp lastInvitedAt on volunteer (date-only)
       setAppState((prev) => ({
         ...prev,
         volunteers: prev.volunteers.map((v) =>
@@ -583,8 +654,6 @@ export default function CoordinatorPage({ appState, setAppState }) {
   function handleSendInvite(volunteerId) {
     const v = volunteersById.get(volunteerId);
     if (!v) return;
-
-    // NEW: open SMS prompt first (no state updates until user clicks Open/Copy)
     openSmsModal("invite", v);
   }
 
@@ -616,8 +685,6 @@ export default function CoordinatorPage({ appState, setAppState }) {
   function handleSendFollowUp(volunteerId) {
     const v = volunteersById.get(volunteerId);
     if (!v) return;
-
-    // NEW: open SMS prompt first
     openSmsModal("followUp", v);
   }
 
@@ -625,7 +692,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
     const nowISO = new Date().toISOString();
     updateInvite(volunteerId, { status: "No Response", responseAt: nowISO });
 
-    // Treat like a decline for cooldown later
+    // Treat like a decline for cadence touch
     setAppState((prev) => ({
       ...prev,
       volunteers: prev.volunteers.map((v) =>
@@ -677,8 +744,6 @@ export default function CoordinatorPage({ appState, setAppState }) {
   function handleCopyReminderForVolunteer(volunteerId) {
     const v = volunteersById.get(volunteerId);
     if (!v) return;
-
-    // NEW: open SMS prompt first
     openSmsModal("reminder", v);
   }
 
@@ -699,27 +764,23 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   // =========================
-  // Step 18: Suggested Next Up (✅ Option 2 rotation)
+  // Step 18: Suggested Next Up (cadence + last touch ordering)
   // =========================
   const suggestedNextUp = useMemo(() => {
     if (!week) return [];
 
     const excludeIds = new Set(week.invites.map((i) => i.volunteerId));
 
-    // Default cadence is monthly for anyone missing inviteCadence
     return sortInviteCandidates(appState.volunteers, fridayISO, {
       excludeIds,
       defaultCadence: "monthly",
       onlyActive: true,
-      cooldownAfterConfirmWeeks,
-      cooldownAfterDeclineWeeks,
     });
-
   }, [appState.volunteers, week, fridayISO]);
 
   // Step 21: tiny UI helper renderer for safety notes
   function SafetyNotes({ v }) {
-    const notes = getSafetyNotes(v, fridayISO, cooldownAfterConfirmWeeks, cooldownAfterDeclineWeeks);
+    const notes = getSafetyNotes(v, fridayISO);
     if (!notes.length) return null;
 
     return (
@@ -1080,7 +1141,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
           <div style={styles.row}>
             <div style={{ fontWeight: 900, color: THEME.navy }}>Suggested Next Up</div>
             <div style={{ fontSize: 12, color: THEME.muted }}>
-              Cooldown: served {cooldownAfterConfirmWeeks}w • declined {cooldownAfterDeclineWeeks}w
+              Ordered by cadence + most recent touch (invite/confirm/decline)
             </div>
           </div>
 
@@ -1090,7 +1151,6 @@ export default function CoordinatorPage({ appState, setAppState }) {
             </div>
           ) : (
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-              {/* ✅ UPDATED: uses eligibleNow instead of inCooldown */}
               {suggestedNextUp.map(({ v, eligibleNow, eligibleISO }) => (
                 <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                   <div style={{ minWidth: 0 }}>
@@ -1108,7 +1168,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
                       </div>
                     ) : (
                       <div style={{ marginTop: 6, fontSize: 12, fontWeight: 900, color: THEME.muted }}>
-                        Cooldown — eligible on {eligibleISO ? formatFriendlyDate(eligibleISO) : "N/A"}
+                        Not due yet (cadence)
                       </div>
                     )}
                   </div>

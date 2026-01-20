@@ -2,12 +2,11 @@
 // Option 2: Cadence + Rotation ordering (pure helpers)
 //
 // ✅ Cadence eligibility is based on the most recent "touch":
-//    lastInvitedAt OR lastConfirmedDate (whichever is later)
+//    lastInvitedAt OR lastConfirmedDate OR lastDeclinedDate (whichever is later)
 //
 // Why:
-// - If someone is Confirmed (served) but lastInvitedAt wasn't stamped (older data / edge cases),
-//   they still should respect cadence cooldown.
-// - This puts BOTH Invited + Confirmed "into play" for cadence behavior.
+// - We want Invited + Confirmed + Declined to all “count” as activity.
+// - No separate “cooldown weeks” needed — cadence is the cooldown.
 
 const CORE_ROLES_NO_COOLDOWN = new Set([
   "Chairperson",
@@ -86,19 +85,23 @@ export function getCooldownDaysForVolunteer(v, defaultCadence = "monthly") {
   return def ? def.cooldownDays : 21; // fallback to monthly
 }
 
-// ✅ Eligible date is based on most recent "touch":
-//    lastInvitedAt OR lastConfirmedDate (whichever is later)
-export function getEligibleISO(v, fridayISO, defaultCadence = "monthly") {
-  const cooldownDays = getCooldownDaysForVolunteer(v, defaultCadence);
-
-  if (cooldownDays === 0) return fridayISO;
-
+// ✅ lastTouch includes Declined too (so declines affect cadence)
+export function getLastTouchISO(v) {
   const lastInvited = normalizeISODate(v?.lastInvitedAt);
   const lastConfirmed = normalizeISODate(v?.lastConfirmedDate);
+  const lastDeclined = normalizeISODate(v?.lastDeclinedDate);
 
-  const lastTouch = maxISO(lastInvited, lastConfirmed);
+  return maxISO(maxISO(lastInvited, lastConfirmed), lastDeclined);
+}
 
-  // Never invited/confirmed -> eligible now
+// ✅ Eligible date is based on most recent "touch"
+export function getEligibleISO(v, fridayISO, defaultCadence = "monthly") {
+  const cooldownDays = getCooldownDaysForVolunteer(v, defaultCadence);
+  if (cooldownDays === 0) return fridayISO;
+
+  const lastTouch = getLastTouchISO(v);
+
+  // Never touched -> eligible now
   if (!lastTouch) return fridayISO;
 
   return addDaysISO(lastTouch, cooldownDays);
@@ -112,11 +115,10 @@ export function isEligibleThisWeek(v, fridayISO, defaultCadence = "monthly") {
 
 // ---- Ordering rules (invite rotation spirit) ----
 // 1) Weekly cadence first
-// 2) Eligible first (not in cadence cooldown)
-// 3) Never touched (no invite/confirm history) first
-// 4) Then by lastTouch (oldest touch first) for cadence fairness
-// 5) Then by lastConfirmedDate (oldest attendance first) as a secondary fairness tie-break
-// 6) Name tie-break
+// 2) Eligible first
+// 3) Never touched first
+// 4) Oldest lastTouch first
+// 5) Name tie-break
 export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
   const { excludeIds = new Set(), defaultCadence = "monthly", onlyActive = true } = opts;
 
@@ -125,28 +127,14 @@ export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
     .filter((v) => !excludeIds.has(v.id))
     .map((v) => {
       const cadence = getCadenceKey(v, defaultCadence);
-
       const eligibleISO = getEligibleISO(v, fridayISO, defaultCadence);
       const eligibleNow = isEligibleThisWeek(v, fridayISO, defaultCadence);
 
-      const lastInvited = normalizeISODate(v?.lastInvitedAt);
-      const lastConfirmed = normalizeISODate(v?.lastConfirmedDate);
-
-      const lastTouch = maxISO(lastInvited, lastConfirmed);
+      const lastTouch = getLastTouchISO(v);
       const neverTouched = !lastTouch;
       const lastTouchSort = lastTouch || "0000-00-00";
 
-      const lastConfirmedSort = lastConfirmed || "0000-00-00";
-
-      return {
-        v,
-        cadence,
-        eligibleISO,
-        eligibleNow,
-        neverTouched,
-        lastTouchSort,
-        lastConfirmedSort,
-      };
+      return { v, cadence, eligibleISO, eligibleNow, neverTouched, lastTouchSort };
     });
 
   list.sort((a, b) => {
@@ -167,14 +155,72 @@ export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
       return a.lastTouchSort.localeCompare(b.lastTouchSort);
     }
 
-    // 5) Oldest lastConfirmedDate first (secondary fairness)
-    if (a.lastConfirmedSort !== b.lastConfirmedSort) {
-      return a.lastConfirmedSort.localeCompare(b.lastConfirmedSort);
-    }
-
-    // 6) Name
+    // 5) Name
     return (a.v?.name || "").localeCompare(b.v?.name || "");
   });
 
   return list;
+}
+
+/**
+ * NEW: Auto-build a weekly invite list (IDs only)
+ *
+ * Rules:
+ * - Include pinned roles (if present + active)
+ * - Include cadence=weekly (if active)
+ * - Fill remaining using sortInviteCandidates (cadence + lastTouch)
+ */
+export function buildAutoWeekInviteIds(volunteers, fridayISO, opts = {}) {
+  const {
+    targetCount = 12,
+    defaultCadence = "monthly",
+    pinnedRoles = [
+      "Chairperson",
+      "List Coordinator",
+      "Meeting Steward",
+      "Discussion Group Lead",
+      "Big Book Lead",
+    ],
+  } = opts;
+
+  const active = (volunteers || []).filter((v) => !!v.active);
+
+  const picked = [];
+  const pickedSet = new Set();
+
+  function pick(v) {
+    if (!v || !v.id) return;
+    if (pickedSet.has(v.id)) return;
+    picked.push(v.id);
+    pickedSet.add(v.id);
+  }
+
+  // 1) Pinned roles first (one person per role)
+  for (const role of pinnedRoles) {
+    const person = active.find((v) => (v.coreRole || "Volunteer") === role);
+    if (person) pick(person);
+  }
+
+  // 2) Weekly cadence always included
+  const weeklyPeople = active
+    .filter((v) => getCadenceKey(v, defaultCadence) === "weekly")
+    .sort((a, b) => (a.name || "").localeCompare(b.name || ""));
+  for (const v of weeklyPeople) pick(v);
+
+  // 3) Fill remaining by rotation ordering
+  if (picked.length < targetCount) {
+    const remaining = sortInviteCandidates(active, fridayISO, {
+      excludeIds: pickedSet,
+      defaultCadence,
+      onlyActive: true,
+    });
+
+    for (const row of remaining) {
+      if (picked.length >= targetCount) break;
+      pick(row.v);
+    }
+  }
+
+  // If we have fewer than targetCount available, return what we have.
+  return picked.slice(0, targetCount);
 }
