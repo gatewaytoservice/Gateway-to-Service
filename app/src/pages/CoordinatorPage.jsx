@@ -54,7 +54,7 @@
 // - Step 18.5: Gateway Calm theme (navy/teal outline buttons + hover fill)
 // - Step 21: Volunteer Status Safety (WARNINGS ONLY — no blocking)
 
-// src/pages/CoordinatorPage.jsx
+// app/src/pages/CoordinatorPage.jsx
 import React, { useEffect, useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
@@ -359,10 +359,6 @@ export default function CoordinatorPage({ appState, setAppState }) {
     };
   }, [showLastMinute, smsModal.open]);
 
-  // NOTE: Keeping these settings for compatibility (NO longer used for safety-date spam)
-  const cooldownAfterConfirmWeeks = appState.settings.cooldownAfterConfirmWeeks ?? 2;
-  const cooldownAfterDeclineWeeks = appState.settings.cooldownAfterDeclineWeeks ?? 3;
-
   // --- Lookups for fast access ---
   const volunteersById = useMemo(() => {
     const m = new Map();
@@ -457,8 +453,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
       }
     }
 
-    // (Optional) If you still want to keep the imported helper in play,
-    // you can fall back to it only if we somehow got nothing.
+    // Optional fallback to imported helper (rare)
     if (initialIds.length === 0 && typeof buildAutoWeekInviteIds === "function") {
       const fallbackIds = buildAutoWeekInviteIds(appState.volunteers, fridayISO, {
         targetCount,
@@ -534,6 +529,63 @@ export default function CoordinatorPage({ appState, setAppState }) {
         };
       }),
     }));
+  }
+
+  // =========================
+  // Auto Backfill (Declined / No Response)
+  // =========================
+  // "Active pool" are people still in play for this week.
+  // Declined and No Response are treated as "dropped" from the pool.
+  function isActivePoolStatus(status) {
+    return status !== "Declined" && status !== "No Response";
+  }
+
+  function maybeBackfillAfterDrop(nextState, weekObj, fridayISO) {
+    // Don’t backfill if list is finalized
+    if (!weekObj || weekObj.finalized) return { nextState, didAdd: false, addedName: "" };
+
+    const preferred = nextState.settings.preferredConfirmed ?? 12;
+    const maxVols = nextState.settings.maxVolunteers ?? 14;
+    const targetCount = Math.min(preferred, maxVols);
+
+    const invites = weekObj.invites || [];
+    const activePoolCount = invites.filter((i) => isActivePoolStatus(i.status)).length;
+
+    if (activePoolCount >= targetCount) {
+      return { nextState, didAdd: false, addedName: "" };
+    }
+
+    const excludeIds = new Set(invites.map((i) => i.volunteerId));
+
+    const candidates = sortInviteCandidates(nextState.volunteers, fridayISO, {
+      excludeIds,
+      defaultCadence: "monthly",
+      onlyActive: true,
+    });
+
+    // Prefer someone eligibleNow, else take the top candidate
+    const picked = (candidates.find((c) => c.eligibleNow) || candidates[0])?.v || null;
+    if (!picked?.id) return { nextState, didAdd: false, addedName: "" };
+
+    const newInvite = {
+      id: crypto.randomUUID(),
+      volunteerId: picked.id,
+      status: "Not Invited",
+      inviteSentAt: null,
+      followUpSentAt: null,
+      responseAt: null,
+    };
+
+    const patchedWeek = { ...weekObj, invites: [...invites, newInvite] };
+
+    return {
+      nextState: {
+        ...nextState,
+        weeks: nextState.weeks.map((w) => (w.id === weekObj.id ? patchedWeek : w)),
+      },
+      didAdd: true,
+      addedName: picked.name || "",
+    };
   }
 
   // =========================
@@ -671,14 +723,45 @@ export default function CoordinatorPage({ appState, setAppState }) {
 
   function handleMarkNo(volunteerId) {
     const nowISO = new Date().toISOString();
-    updateInvite(volunteerId, { status: "Declined", responseAt: nowISO });
 
-    setAppState((prev) => ({
-      ...prev,
-      volunteers: prev.volunteers.map((v) =>
+    setAppState((prev) => {
+      const idx = prev.weeks.findIndex((w) => w.date === fridayISO);
+      if (idx === -1) return prev;
+
+      const w = prev.weeks[idx];
+
+      // 1) update invite status -> Declined
+      const patchedInvites = (w.invites || []).map((inv) =>
+        inv.volunteerId === volunteerId ? { ...inv, status: "Declined", responseAt: nowISO } : inv
+      );
+
+      // 2) stamp lastDeclinedDate for cadence touch
+      const patchedVolunteers = prev.volunteers.map((v) =>
         v.id === volunteerId ? { ...v, lastDeclinedDate: fridayISO } : v
-      ),
-    }));
+      );
+
+      const nextState = {
+        ...prev,
+        volunteers: patchedVolunteers,
+        weeks: prev.weeks.map((x) =>
+          x.id === w.id ? { ...x, invites: patchedInvites } : x
+        ),
+      };
+
+      // 3) backfill one person if pool falls below targetCount
+      const updatedWeek = nextState.weeks.find((x) => x.id === w.id) || null;
+      const res = maybeBackfillAfterDrop(nextState, updatedWeek, fridayISO);
+
+      // Optional tiny toast (non-blocking)
+      if (res.didAdd && res.addedName) {
+        setTimeout(() => {
+          setToast(`Auto-added: ${res.addedName}`);
+          setTimeout(() => setToast(""), 1200);
+        }, 0);
+      }
+
+      return res.nextState;
+    });
   }
 
   // Wednesday follow-up tools (manual buttons)
@@ -690,15 +773,45 @@ export default function CoordinatorPage({ appState, setAppState }) {
 
   function handleMarkNoResponse(volunteerId) {
     const nowISO = new Date().toISOString();
-    updateInvite(volunteerId, { status: "No Response", responseAt: nowISO });
 
-    // Treat like a decline for cadence touch
-    setAppState((prev) => ({
-      ...prev,
-      volunteers: prev.volunteers.map((v) =>
+    setAppState((prev) => {
+      const idx = prev.weeks.findIndex((w) => w.date === fridayISO);
+      if (idx === -1) return prev;
+
+      const w = prev.weeks[idx];
+
+      // 1) update invite status -> No Response
+      const patchedInvites = (w.invites || []).map((inv) =>
+        inv.volunteerId === volunteerId ? { ...inv, status: "No Response", responseAt: nowISO } : inv
+      );
+
+      // 2) treat like a decline for cadence touch
+      const patchedVolunteers = prev.volunteers.map((v) =>
         v.id === volunteerId ? { ...v, lastDeclinedDate: fridayISO } : v
-      ),
-    }));
+      );
+
+      const nextState = {
+        ...prev,
+        volunteers: patchedVolunteers,
+        weeks: prev.weeks.map((x) =>
+          x.id === w.id ? { ...x, invites: patchedInvites } : x
+        ),
+      };
+
+      // 3) backfill one person if pool falls below targetCount
+      const updatedWeek = nextState.weeks.find((x) => x.id === w.id) || null;
+      const res = maybeBackfillAfterDrop(nextState, updatedWeek, fridayISO);
+
+      // Optional tiny toast (non-blocking)
+      if (res.didAdd && res.addedName) {
+        setTimeout(() => {
+          setToast(`Auto-added: ${res.addedName}`);
+          setTimeout(() => setToast(""), 1200);
+        }, 0);
+      }
+
+      return res.nextState;
+    });
   }
 
   // =========================
@@ -1151,7 +1264,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
             </div>
           ) : (
             <div style={{ marginTop: 10, display: "grid", gap: 10 }}>
-              {suggestedNextUp.map(({ v, eligibleNow, eligibleISO }) => (
+              {suggestedNextUp.map(({ v, eligibleNow }) => (
                 <div key={v.id} className="coordinatorRow" style={styles.invRow}>
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 900, color: THEME.navy }}>{v.name}</div>
