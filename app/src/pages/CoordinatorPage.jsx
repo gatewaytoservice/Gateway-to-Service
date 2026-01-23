@@ -321,6 +321,31 @@ function StatusKey() {
   );
 }
 
+// =========================
+// Finalize prompt window (America/Chicago)
+// =========================
+function getCentralParts(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(now);
+
+  const get = (type) => parts.find((p) => p.type === type)?.value ?? "";
+  const weekday = get("weekday"); // e.g. "Fri"
+  const hour = parseInt(get("hour"), 10);
+  const minute = parseInt(get("minute"), 10);
+  return { weekday, hour: Number.isFinite(hour) ? hour : 0, minute: Number.isFinite(minute) ? minute : 0 };
+}
+
+function inFridayFinalizeWindowCentral(now = new Date()) {
+  const { weekday, hour } = getCentralParts(now);
+  // Friday 12:00pm–6:59pm (meeting at 7pm)
+  return weekday === "Fri" && hour >= 12 && hour < 19;
+}
+
 export default function CoordinatorPage({ appState, setAppState }) {
   // --- Week selection: always operate on the upcoming Friday ---
   const fridayISO = getUpcomingFridayISO();
@@ -335,6 +360,16 @@ export default function CoordinatorPage({ appState, setAppState }) {
   // Hover tracking for buttons
   const [hoveredBtn, setHoveredBtn] = useState(null);
 
+  // Row edit state (status changes after-the-fact)
+  const [editStatus, setEditStatus] = useState({
+    open: false,
+    volunteerId: null,
+    nextStatus: "Invited",
+  });
+
+  // Track hourly nudges (Friday after 12pm Central until finalized)
+  const [lastNudgeHour, setLastNudgeHour] = useState(null);
+
   // =========================
   // SMS Draft Modal (Invite / FollowUp / Reminder)
   // =========================
@@ -348,7 +383,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
   });
 
   useEffect(() => {
-    const anyModalOpen = showLastMinute || smsModal.open;
+    const anyModalOpen = showLastMinute || smsModal.open || editStatus.open;
     if (!anyModalOpen) return;
 
     const prev = document.body.style.overflow;
@@ -357,7 +392,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [showLastMinute, smsModal.open]);
+  }, [showLastMinute, smsModal.open, editStatus.open]);
 
   // --- Lookups for fast access ---
   const volunteersById = useMemo(() => {
@@ -394,15 +429,192 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }, [appState.volunteers, week, inviteByVolunteerId]);
 
   // =========================
+  // Capacity helpers (preferred list size, not the hard max)
+  // =========================
+  function getTargetCount(state) {
+    const preferred = state.settings.preferredConfirmed ?? 12;
+    const maxVols = state.settings.maxVolunteers ?? 14;
+    return Math.min(preferred, maxVols);
+  }
+
+  // "Active pool" are people still in play for this week.
+  // Declined and No Response are treated as "dropped" from the pool.
+  function isActivePoolStatus(status) {
+    return status !== "Declined" && status !== "No Response";
+  }
+
+  function isProtectedFromAutoRemoval(volunteer) {
+    const role = volunteer?.coreRole || "";
+    return CORE_ROLE_ORDER.includes(role);
+  }
+
+  // =========================
+  // Week patch helpers (unfinalize when edits happen)
+  // =========================
+  function patchWeek(prevState, weekId, patcher) {
+    return {
+      ...prevState,
+      weeks: prevState.weeks.map((w) => {
+        if (w.id !== weekId) return w;
+        const next = patcher(w);
+        return next;
+      }),
+    };
+  }
+
+  function unfinalizeWeekIfNeeded(weekObj) {
+    if (!weekObj) return weekObj;
+    if (!weekObj.finalized) return weekObj;
+    return { ...weekObj, finalized: false };
+  }
+
+  // =========================
+  // Auto Backfill (Declined / No Response)
+  // =========================
+  function maybeBackfillAfterDrop(nextState, weekObj, fridayISO) {
+    if (!weekObj) return { nextState, didAdd: false, addedName: "" };
+
+    // If it WAS finalized, we already unfinalized by the time we call this.
+    if (weekObj.finalized) return { nextState, didAdd: false, addedName: "" };
+
+    const targetCount = getTargetCount(nextState);
+    const invites = weekObj.invites || [];
+    const activePoolCount = invites.filter((i) => isActivePoolStatus(i.status)).length;
+
+    if (activePoolCount >= targetCount) {
+      return { nextState, didAdd: false, addedName: "" };
+    }
+
+    const excludeIds = new Set(invites.map((i) => i.volunteerId));
+
+    const candidates = sortInviteCandidates(nextState.volunteers, fridayISO, {
+      excludeIds,
+      defaultCadence: "monthly",
+      onlyActive: true,
+    });
+
+    // Prefer someone eligibleNow, else take the top candidate
+    const picked = (candidates.find((c) => c.eligibleNow) || candidates[0])?.v || null;
+    if (!picked?.id) return { nextState, didAdd: false, addedName: "" };
+
+    const nowISO = new Date().toISOString();
+
+    const newInvite = {
+      id: crypto.randomUUID(),
+      volunteerId: picked.id,
+      status: "Not Invited",
+      inviteSentAt: null,
+      followUpSentAt: null,
+      responseAt: null,
+      createdAt: nowISO,
+      autoAdded: true,
+      autoAddedAt: nowISO,
+    };
+
+    const patchedWeek = { ...weekObj, invites: [...invites, newInvite] };
+
+    return {
+      nextState: {
+        ...nextState,
+        weeks: nextState.weeks.map((w) => (w.id === weekObj.id ? patchedWeek : w)),
+      },
+      didAdd: true,
+      addedName: picked.name || "",
+    };
+  }
+
+  // =========================
+  // Overflow handling:
+  // If someone flips to YES late and we’re at capacity,
+  // auto-remove the most recent auto-added "Not Invited/Invited" row
+  // so the coordinator doesn’t accidentally invite extra people.
+  // =========================
+  function trimOverflowIfNeeded(nextState, weekObj) {
+    if (!weekObj) return { nextState, didRemove: false, removedName: "" };
+
+    const targetCount = getTargetCount(nextState);
+    const invites = weekObj.invites || [];
+    let activePoolCount = invites.filter((i) => isActivePoolStatus(i.status)).length;
+
+    if (activePoolCount <= targetCount) {
+      return { nextState, didRemove: false, removedName: "" };
+    }
+
+    const byId = new Map(nextState.volunteers.map((v) => [v.id, v]));
+    const getInviteCreated = (inv) => inv.autoAddedAt || inv.createdAt || inv.inviteSentAt || "0000-00-00T00:00:00.000Z";
+
+    // Candidates to remove:
+    // 1) autoAdded AND (Not Invited or Invited) AND not protected role
+    // 2) fallback: (Not Invited or Invited) AND not protected role
+    const removable1 = invites
+      .filter((inv) => inv.autoAdded && (inv.status === "Not Invited" || inv.status === "Invited"))
+      .filter((inv) => !isProtectedFromAutoRemoval(byId.get(inv.volunteerId)));
+
+    const removable2 = invites
+      .filter((inv) => inv.status === "Not Invited" || inv.status === "Invited")
+      .filter((inv) => !isProtectedFromAutoRemoval(byId.get(inv.volunteerId)));
+
+    const pool = removable1.length ? removable1 : removable2;
+    if (!pool.length) {
+      // Nothing safe to auto-remove (we won't touch Confirmed or core roles automatically)
+      return { nextState, didRemove: false, removedName: "" };
+    }
+
+    // Remove newest (most recently auto-added / created / invited)
+    pool.sort((a, b) => getInviteCreated(b).localeCompare(getInviteCreated(a)));
+    const toRemove = pool[0];
+    const removedV = byId.get(toRemove.volunteerId);
+
+    // Remove invite + restore volunteer "touch" if we stored prev values
+    const patchedWeek = {
+      ...weekObj,
+      invites: invites.filter((inv) => inv.id !== toRemove.id),
+    };
+
+    let patchedVols = nextState.volunteers;
+
+    if (removedV) {
+      // Restore lastInvitedAt if this invite had set it and we stored the previous value
+      if (toRemove.prevLastInvitedAt !== undefined && removedV.lastInvitedAt === fridayISO) {
+        patchedVols = patchedVols.map((v) =>
+          v.id === removedV.id ? { ...v, lastInvitedAt: toRemove.prevLastInvitedAt || null } : v
+        );
+      }
+      // Restore lastConfirmedDate if we had set it via this invite edit (rare for overflow removal)
+      if (toRemove.prevLastConfirmedDate !== undefined && removedV.lastConfirmedDate === fridayISO) {
+        patchedVols = patchedVols.map((v) =>
+          v.id === removedV.id ? { ...v, lastConfirmedDate: toRemove.prevLastConfirmedDate || null } : v
+        );
+      }
+      // Restore lastDeclinedDate if we had set it via this invite edit (rare for overflow removal)
+      if (toRemove.prevLastDeclinedDate !== undefined && removedV.lastDeclinedDate === fridayISO) {
+        patchedVols = patchedVols.map((v) =>
+          v.id === removedV.id ? { ...v, lastDeclinedDate: toRemove.prevLastDeclinedDate || null } : v
+        );
+      }
+    }
+
+    const updatedState = {
+      ...nextState,
+      volunteers: patchedVols,
+      weeks: nextState.weeks.map((w) => (w.id === weekObj.id ? patchedWeek : w)),
+    };
+
+    activePoolCount -= 1;
+
+    // If still overflowing (unlikely), we could loop, but we keep it simple: remove one at a time.
+    // Coordinator can remove more manually if needed.
+
+    return { nextState: updatedState, didRemove: true, removedName: removedV?.name || "" };
+  }
+
+  // =========================
   // A) Week creation (UPDATED: auto-build initial list)
   // =========================
   function createWeekIfMissing() {
     if (week) return;
 
-    // Target list size: preferredConfirmed (default 12), capped by maxVolunteers (default 14)
-    const preferred = appState.settings.preferredConfirmed ?? 12;
-    const maxVols = appState.settings.maxVolunteers ?? 14;
-    const targetCount = Math.min(preferred, maxVols);
+    const targetCount = getTargetCount(appState);
 
     // ✅ Auto-build invite IDs directly here (so it works even if a helper misbehaves)
     const used = new Set();
@@ -466,6 +678,8 @@ export default function CoordinatorPage({ appState, setAppState }) {
       }
     }
 
+    const nowISO = new Date().toISOString();
+
     const initialInvites = initialIds.map((volunteerId) => ({
       id: crypto.randomUUID(),
       volunteerId,
@@ -473,6 +687,9 @@ export default function CoordinatorPage({ appState, setAppState }) {
       inviteSentAt: null,
       followUpSentAt: null,
       responseAt: null,
+      createdAt: nowISO,
+      autoAdded: false,
+      autoAddedAt: null,
     }));
 
     const newWeek = {
@@ -490,11 +707,13 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   // =========================
-  // B) Add volunteer to this week
+  // B) Add volunteer to this week (manual add)
   // =========================
   function addVolunteerToThisWeek(volunteerId) {
     if (!week) return;
     if (inviteByVolunteerId.has(volunteerId)) return;
+
+    const nowISO = new Date().toISOString();
 
     const newInvite = {
       id: crypto.randomUUID(),
@@ -503,89 +722,74 @@ export default function CoordinatorPage({ appState, setAppState }) {
       inviteSentAt: null,
       followUpSentAt: null,
       responseAt: null,
+      createdAt: nowISO,
+      autoAdded: false,
+      autoAddedAt: null,
     };
 
-    setAppState((prev) => ({
-      ...prev,
-      weeks: prev.weeks.map((w) =>
-        w.id === week.id ? { ...w, invites: [...w.invites, newInvite] } : w
-      ),
-    }));
+    setAppState((prev) =>
+      patchWeek(prev, week.id, (w) => ({
+        ...unfinalizeWeekIfNeeded(w),
+        invites: [...w.invites, newInvite],
+      }))
+    );
   }
 
   // Patch a week invite record (status, timestamps, etc.)
   function updateInvite(volunteerId, patch) {
     if (!week) return;
 
-    setAppState((prev) => ({
-      ...prev,
-      weeks: prev.weeks.map((w) => {
-        if (w.id !== week.id) return w;
-        return {
-          ...w,
-          invites: w.invites.map((inv) =>
-            inv.volunteerId === volunteerId ? { ...inv, ...patch } : inv
-          ),
+    setAppState((prev) =>
+      patchWeek(prev, week.id, (w) => ({
+        ...unfinalizeWeekIfNeeded(w),
+        invites: w.invites.map((inv) => (inv.volunteerId === volunteerId ? { ...inv, ...patch } : inv)),
+      }))
+    );
+  }
+
+  // Remove from THIS week only (should not count against volunteer).
+  // If we have stored prev touch values on the invite record, restore them.
+  function removeFromThisWeek(volunteerId) {
+    if (!week) return;
+
+    setAppState((prev) => {
+      const w = prev.weeks.find((x) => x.id === week.id) || null;
+      if (!w) return prev;
+
+      const inv = (w.invites || []).find((i) => i.volunteerId === volunteerId) || null;
+
+      let next = patchWeek(prev, week.id, (wk) => ({
+        ...unfinalizeWeekIfNeeded(wk),
+        invites: (wk.invites || []).filter((i) => i.volunteerId !== volunteerId),
+      }));
+
+      // Restore volunteer touch fields if we have prev values captured on the invite record.
+      if (inv) {
+        next = {
+          ...next,
+          volunteers: next.volunteers.map((v) => {
+            if (v.id !== volunteerId) return v;
+
+            const patch = { ...v };
+
+            // Restore fields ONLY if the current value equals this week's fridayISO.
+            if (inv.prevLastInvitedAt !== undefined && v.lastInvitedAt === fridayISO) {
+              patch.lastInvitedAt = inv.prevLastInvitedAt || null;
+            }
+            if (inv.prevLastConfirmedDate !== undefined && v.lastConfirmedDate === fridayISO) {
+              patch.lastConfirmedDate = inv.prevLastConfirmedDate || null;
+            }
+            if (inv.prevLastDeclinedDate !== undefined && v.lastDeclinedDate === fridayISO) {
+              patch.lastDeclinedDate = inv.prevLastDeclinedDate || null;
+            }
+
+            return patch;
+          }),
         };
-      }),
-    }));
-  }
+      }
 
-  // =========================
-  // Auto Backfill (Declined / No Response)
-  // =========================
-  // "Active pool" are people still in play for this week.
-  // Declined and No Response are treated as "dropped" from the pool.
-  function isActivePoolStatus(status) {
-    return status !== "Declined" && status !== "No Response";
-  }
-
-  function maybeBackfillAfterDrop(nextState, weekObj, fridayISO) {
-    // Don’t backfill if list is finalized
-    if (!weekObj || weekObj.finalized) return { nextState, didAdd: false, addedName: "" };
-
-    const preferred = nextState.settings.preferredConfirmed ?? 12;
-    const maxVols = nextState.settings.maxVolunteers ?? 14;
-    const targetCount = Math.min(preferred, maxVols);
-
-    const invites = weekObj.invites || [];
-    const activePoolCount = invites.filter((i) => isActivePoolStatus(i.status)).length;
-
-    if (activePoolCount >= targetCount) {
-      return { nextState, didAdd: false, addedName: "" };
-    }
-
-    const excludeIds = new Set(invites.map((i) => i.volunteerId));
-
-    const candidates = sortInviteCandidates(nextState.volunteers, fridayISO, {
-      excludeIds,
-      defaultCadence: "monthly",
-      onlyActive: true,
+      return next;
     });
-
-    // Prefer someone eligibleNow, else take the top candidate
-    const picked = (candidates.find((c) => c.eligibleNow) || candidates[0])?.v || null;
-    if (!picked?.id) return { nextState, didAdd: false, addedName: "" };
-
-    const newInvite = {
-      id: crypto.randomUUID(),
-      volunteerId: picked.id,
-      status: "Not Invited",
-      inviteSentAt: null,
-      followUpSentAt: null,
-      responseAt: null,
-    };
-
-    const patchedWeek = { ...weekObj, invites: [...invites, newInvite] };
-
-    return {
-      nextState: {
-        ...nextState,
-        weeks: nextState.weeks.map((w) => (w.id === weekObj.id ? patchedWeek : w)),
-      },
-      didAdd: true,
-      addedName: picked.name || "",
-    };
   }
 
   // =========================
@@ -677,16 +881,20 @@ export default function CoordinatorPage({ appState, setAppState }) {
     const nowISO = new Date().toISOString();
 
     if (kind === "invite") {
+      const v = volunteersById.get(volunteerId);
+
       updateInvite(volunteerId, {
         status: "Invited",
         inviteSentAt: nowISO,
+        // capture prior "touch" so removal/edits can restore
+        prevLastInvitedAt: v?.lastInvitedAt ?? null,
       });
 
       // stamp lastInvitedAt on volunteer (date-only)
       setAppState((prev) => ({
         ...prev,
-        volunteers: prev.volunteers.map((v) =>
-          v.id === volunteerId ? { ...v, lastInvitedAt: fridayISO } : v
+        volunteers: prev.volunteers.map((vv) =>
+          vv.id === volunteerId ? { ...vv, lastInvitedAt: fridayISO } : vv
         ),
       }));
     }
@@ -701,7 +909,160 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   // =========================
-  // D) Invite flow actions
+  // D) Status change engine (used by buttons + Edit Status)
+  // =========================
+  function applyStatus(volunteerId, nextStatus) {
+    if (!week) return;
+
+    const nowISO = new Date().toISOString();
+
+    setAppState((prev) => {
+      const w = prev.weeks.find((x) => x.id === week.id) || null;
+      if (!w) return prev;
+
+      // Always unfinalize if edits happen
+      const baseWeek = unfinalizeWeekIfNeeded(w);
+
+      const currentInvite = (baseWeek.invites || []).find((i) => i.volunteerId === volunteerId) || null;
+      if (!currentInvite) return prev;
+
+      const v = prev.volunteers.find((vv) => vv.id === volunteerId) || null;
+
+      // Build invite patch:
+      let invitePatch = { status: nextStatus };
+
+      // Normalize timestamps based on target status
+      if (nextStatus === "Not Invited") {
+        invitePatch = {
+          ...invitePatch,
+          inviteSentAt: null,
+          followUpSentAt: null,
+          responseAt: null,
+        };
+      } else if (nextStatus === "Invited") {
+        invitePatch = {
+          ...invitePatch,
+          inviteSentAt: currentInvite.inviteSentAt || nowISO,
+          responseAt: null,
+        };
+      } else if (nextStatus === "Confirmed" || nextStatus === "Declined" || nextStatus === "No Response") {
+        invitePatch = {
+          ...invitePatch,
+          responseAt: nowISO,
+        };
+      }
+
+      // Capture previous volunteer touch fields ONCE (so we can restore if status is corrected later)
+      const ensurePrev = (key, value) => {
+        if (currentInvite[key] !== undefined) return; // already captured
+        invitePatch[key] = value ?? null;
+      };
+
+      // Volunteer touch updates + restore logic when switching away
+      let patchedVolunteers = prev.volunteers;
+
+      if (v) {
+        // If leaving a status that wrote a touch, restore from prev stored values when applicable.
+        const leavingStatus = currentInvite.status;
+
+        // Restore lastConfirmedDate if leaving Confirmed
+        if (leavingStatus === "Confirmed" && nextStatus !== "Confirmed") {
+          if (currentInvite.prevLastConfirmedDate !== undefined && v.lastConfirmedDate === fridayISO) {
+            patchedVolunteers = patchedVolunteers.map((vv) =>
+              vv.id === volunteerId ? { ...vv, lastConfirmedDate: currentInvite.prevLastConfirmedDate || null } : vv
+            );
+          }
+        }
+
+        // Restore lastDeclinedDate if leaving Declined/No Response
+        if ((leavingStatus === "Declined" || leavingStatus === "No Response") && nextStatus !== leavingStatus) {
+          if (currentInvite.prevLastDeclinedDate !== undefined && v.lastDeclinedDate === fridayISO) {
+            patchedVolunteers = patchedVolunteers.map((vv) =>
+              vv.id === volunteerId ? { ...vv, lastDeclinedDate: currentInvite.prevLastDeclinedDate || null } : vv
+            );
+          }
+        }
+
+        // Restore lastInvitedAt if leaving Invited
+        if (leavingStatus === "Invited" && nextStatus !== "Invited") {
+          if (currentInvite.prevLastInvitedAt !== undefined && v.lastInvitedAt === fridayISO) {
+            patchedVolunteers = patchedVolunteers.map((vv) =>
+              vv.id === volunteerId ? { ...vv, lastInvitedAt: currentInvite.prevLastInvitedAt || null } : vv
+            );
+          }
+        }
+
+        // Now apply touch for the new status
+        if (nextStatus === "Invited") {
+          ensurePrev("prevLastInvitedAt", v.lastInvitedAt);
+          patchedVolunteers = patchedVolunteers.map((vv) =>
+            vv.id === volunteerId ? { ...vv, lastInvitedAt: fridayISO } : vv
+          );
+        }
+
+        if (nextStatus === "Confirmed") {
+          ensurePrev("prevLastConfirmedDate", v.lastConfirmedDate);
+          patchedVolunteers = patchedVolunteers.map((vv) =>
+            vv.id === volunteerId ? { ...vv, lastConfirmedDate: fridayISO } : vv
+          );
+        }
+
+        if (nextStatus === "Declined" || nextStatus === "No Response") {
+          ensurePrev("prevLastDeclinedDate", v.lastDeclinedDate);
+          patchedVolunteers = patchedVolunteers.map((vv) =>
+            vv.id === volunteerId ? { ...vv, lastDeclinedDate: fridayISO } : vv
+          );
+        }
+      }
+
+      // Patch invites
+      const patchedInvites = (baseWeek.invites || []).map((inv) =>
+        inv.volunteerId === volunteerId ? { ...inv, ...invitePatch } : inv
+      );
+
+      let nextState = {
+        ...prev,
+        volunteers: patchedVolunteers,
+        weeks: prev.weeks.map((x) =>
+          x.id === baseWeek.id ? { ...baseWeek, invites: patchedInvites } : x
+        ),
+      };
+
+      // Backfill if someone DROPS (Declined / No Response)
+      if (nextStatus === "Declined" || nextStatus === "No Response") {
+        const updatedWeek = nextState.weeks.find((x) => x.id === baseWeek.id) || null;
+        const res = maybeBackfillAfterDrop(nextState, updatedWeek, fridayISO);
+        nextState = res.nextState;
+
+        if (res.didAdd && res.addedName) {
+          setTimeout(() => {
+            setToast(`Auto-added: ${res.addedName}`);
+            setTimeout(() => setToast(""), 1200);
+          }, 0);
+        }
+      }
+
+      // Trim overflow if someone is moved BACK into the active pool
+      // (ex: No Response -> Confirmed, or Declined -> Invited, etc.)
+      const updatedWeek2 = nextState.weeks.find((x) => x.id === baseWeek.id) || null;
+      if (updatedWeek2) {
+        const res2 = trimOverflowIfNeeded(nextState, updatedWeek2);
+        nextState = res2.nextState;
+
+        if (res2.didRemove && res2.removedName) {
+          setTimeout(() => {
+            setToast(`Auto-removed (capacity): ${res2.removedName}`);
+            setTimeout(() => setToast(""), 1400);
+          }, 0);
+        }
+      }
+
+      return nextState;
+    });
+  }
+
+  // =========================
+  // D) Invite flow actions (buttons)
   // =========================
   function handleSendInvite(volunteerId) {
     const v = volunteersById.get(volunteerId);
@@ -710,58 +1071,11 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   function handleMarkYes(volunteerId) {
-    const nowISO = new Date().toISOString();
-    updateInvite(volunteerId, { status: "Confirmed", responseAt: nowISO });
-
-    setAppState((prev) => ({
-      ...prev,
-      volunteers: prev.volunteers.map((v) =>
-        v.id === volunteerId ? { ...v, lastConfirmedDate: fridayISO } : v
-      ),
-    }));
+    applyStatus(volunteerId, "Confirmed");
   }
 
   function handleMarkNo(volunteerId) {
-    const nowISO = new Date().toISOString();
-
-    setAppState((prev) => {
-      const idx = prev.weeks.findIndex((w) => w.date === fridayISO);
-      if (idx === -1) return prev;
-
-      const w = prev.weeks[idx];
-
-      // 1) update invite status -> Declined
-      const patchedInvites = (w.invites || []).map((inv) =>
-        inv.volunteerId === volunteerId ? { ...inv, status: "Declined", responseAt: nowISO } : inv
-      );
-
-      // 2) stamp lastDeclinedDate for cadence touch
-      const patchedVolunteers = prev.volunteers.map((v) =>
-        v.id === volunteerId ? { ...v, lastDeclinedDate: fridayISO } : v
-      );
-
-      const nextState = {
-        ...prev,
-        volunteers: patchedVolunteers,
-        weeks: prev.weeks.map((x) =>
-          x.id === w.id ? { ...x, invites: patchedInvites } : x
-        ),
-      };
-
-      // 3) backfill one person if pool falls below targetCount
-      const updatedWeek = nextState.weeks.find((x) => x.id === w.id) || null;
-      const res = maybeBackfillAfterDrop(nextState, updatedWeek, fridayISO);
-
-      // Optional tiny toast (non-blocking)
-      if (res.didAdd && res.addedName) {
-        setTimeout(() => {
-          setToast(`Auto-added: ${res.addedName}`);
-          setTimeout(() => setToast(""), 1200);
-        }, 0);
-      }
-
-      return res.nextState;
-    });
+    applyStatus(volunteerId, "Declined");
   }
 
   // Wednesday follow-up tools (manual buttons)
@@ -772,46 +1086,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   function handleMarkNoResponse(volunteerId) {
-    const nowISO = new Date().toISOString();
-
-    setAppState((prev) => {
-      const idx = prev.weeks.findIndex((w) => w.date === fridayISO);
-      if (idx === -1) return prev;
-
-      const w = prev.weeks[idx];
-
-      // 1) update invite status -> No Response
-      const patchedInvites = (w.invites || []).map((inv) =>
-        inv.volunteerId === volunteerId ? { ...inv, status: "No Response", responseAt: nowISO } : inv
-      );
-
-      // 2) treat like a decline for cadence touch
-      const patchedVolunteers = prev.volunteers.map((v) =>
-        v.id === volunteerId ? { ...v, lastDeclinedDate: fridayISO } : v
-      );
-
-      const nextState = {
-        ...prev,
-        volunteers: patchedVolunteers,
-        weeks: prev.weeks.map((x) =>
-          x.id === w.id ? { ...x, invites: patchedInvites } : x
-        ),
-      };
-
-      // 3) backfill one person if pool falls below targetCount
-      const updatedWeek = nextState.weeks.find((x) => x.id === w.id) || null;
-      const res = maybeBackfillAfterDrop(nextState, updatedWeek, fridayISO);
-
-      // Optional tiny toast (non-blocking)
-      if (res.didAdd && res.addedName) {
-        setTimeout(() => {
-          setToast(`Auto-added: ${res.addedName}`);
-          setTimeout(() => setToast(""), 1200);
-        }, 0);
-      }
-
-      return res.nextState;
-    });
+    applyStatus(volunteerId, "No Response");
   }
 
   // =========================
@@ -877,6 +1152,36 @@ export default function CoordinatorPage({ appState, setAppState }) {
   }
 
   // =========================
+  // Friday 12pm–7pm Central: hourly prompt to finalize if not finalized
+  // =========================
+  const showFinalizeNudgeBanner = !!week && !week.finalized && inFridayFinalizeWindowCentral(new Date());
+
+  useEffect(() => {
+    if (!week) return;
+    if (week.finalized) return;
+
+    const tick = () => {
+      if (!inFridayFinalizeWindowCentral(new Date())) return;
+
+      const { hour, minute } = getCentralParts(new Date());
+      // Nudge at the top of the hour
+      if (minute !== 0) return;
+
+      if (lastNudgeHour === hour) return;
+      setLastNudgeHour(hour);
+
+      setToast("Reminder: finalize this week’s list ✅");
+      setTimeout(() => setToast(""), 1600);
+    };
+
+    // run once quickly
+    tick();
+
+    const id = setInterval(tick, 60 * 1000);
+    return () => clearInterval(id);
+  }, [week?.id, week?.finalized, lastNudgeHour]);
+
+  // =========================
   // Step 18: Suggested Next Up (cadence + last touch ordering)
   // =========================
   const suggestedNextUp = useMemo(() => {
@@ -905,6 +1210,21 @@ export default function CoordinatorPage({ appState, setAppState }) {
         ))}
       </div>
     );
+  }
+
+  // =========================
+  // Edit Status modal helpers
+  // =========================
+  function openEditStatus(volunteerId, currentStatus) {
+    setEditStatus({
+      open: true,
+      volunteerId,
+      nextStatus: currentStatus || "Invited",
+    });
+  }
+
+  function closeEditStatus() {
+    setEditStatus({ open: false, volunteerId: null, nextStatus: "Invited" });
   }
 
   // =========================
@@ -943,6 +1263,23 @@ export default function CoordinatorPage({ appState, setAppState }) {
             <b>Still Needed (minimum):</b> {stillNeeded}
           </div>
         </div>
+
+        {showFinalizeNudgeBanner ? (
+          <div
+            style={{
+              marginTop: 10,
+              padding: 10,
+              borderRadius: 12,
+              border: `1px solid ${THEME.border}`,
+              background: THEME.bg,
+              color: THEME.navy,
+              fontWeight: 900,
+              lineHeight: 1.35,
+            }}
+          >
+            Friday reminder window is active (12pm–7pm Central). Please finalize the list when edits are done.
+          </div>
+        ) : null}
 
         {!week ? (
           <button
@@ -1118,7 +1455,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
           <div style={styles.row}>
             <div style={{ fontWeight: 900, color: THEME.navy }}>Invitations</div>
             <div style={{ fontSize: 12, color: THEME.muted }}>
-              Send Invite opens a message prompt. Then track Yes/No/Follow-ups here.
+              Send Invite opens a message prompt. Then track Yes/No/Follow-ups here. You can also edit statuses later.
             </div>
           </div>
 
@@ -1153,6 +1490,7 @@ export default function CoordinatorPage({ appState, setAppState }) {
                     <div className="coordinatorActions" style={styles.invActions}>
                       <span style={basePillStyle(inv.status)}>{inv.status}</span>
 
+                      {/* Primary actions */}
                       {inv.status === "Not Invited" ? (
                         <button
                           style={baseButtonStyle({
@@ -1225,16 +1563,52 @@ export default function CoordinatorPage({ appState, setAppState }) {
                         </div>
                       ) : null}
 
-                      {(inv.status === "Confirmed" ||
-                        inv.status === "Declined" ||
-                        inv.status === "No Response") && (
-                        <button
-                          style={baseButtonStyle({ hovered: false, disabled: true, variant: "small" })}
-                          disabled
-                        >
-                          Done
-                        </button>
-                      )}
+                      {/* Edit / Remove (always available) */}
+                      <button
+                        style={baseButtonStyle({
+                          hovered: hoveredBtn === `small:edit:${inv.id}`,
+                          disabled: false,
+                          variant: "small",
+                        })}
+                        onMouseEnter={() => setHoveredBtn(`small:edit:${inv.id}`)}
+                        onMouseLeave={() => setHoveredBtn(null)}
+                        onClick={() => openEditStatus(inv.volunteerId, inv.status)}
+                        title="Change status later (ex: No Response -> Yes)"
+                      >
+                        Edit Status
+                      </button>
+
+                      <button
+                        style={{
+                          ...baseButtonStyle({
+                            hovered: hoveredBtn === `small:remove:${inv.id}`,
+                            disabled: false,
+                            variant: "small",
+                          }),
+                          border:
+                            hoveredBtn === `small:remove:${inv.id}`
+                              ? "1px solid rgba(185, 28, 28, 0.9)"
+                              : "1px solid rgba(185, 28, 28, 0.45)",
+                          color:
+                            hoveredBtn === `small:remove:${inv.id}`
+                              ? "#FFFFFF"
+                              : "rgba(185, 28, 28, 0.95)",
+                          background:
+                            hoveredBtn === `small:remove:${inv.id}`
+                              ? "rgba(185, 28, 28, 0.95)"
+                              : "transparent",
+                        }}
+                        onMouseEnter={() => setHoveredBtn(`small:remove:${inv.id}`)}
+                        onMouseLeave={() => setHoveredBtn(null)}
+                        onClick={() => {
+                          const ok = window.confirm(`Remove ${v.name} from this week’s list?`);
+                          if (!ok) return;
+                          removeFromThisWeek(inv.volunteerId);
+                        }}
+                        title="Remove from this week (does not count against them)"
+                      >
+                        Remove
+                      </button>
                     </div>
                   </div>
                 );
@@ -1467,6 +1841,106 @@ export default function CoordinatorPage({ appState, setAppState }) {
                 ))}
               </div>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {/* EDIT STATUS MODAL */}
+      {editStatus.open ? (
+        <div style={styles.modalBackdrop} onClick={closeEditStatus}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.row}>
+              <div style={{ fontWeight: 1000, color: THEME.navy }}>Edit Status</div>
+              <button
+                style={baseButtonStyle({
+                  hovered: hoveredBtn === "small:closeEdit",
+                  disabled: false,
+                  variant: "small",
+                })}
+                onMouseEnter={() => setHoveredBtn("small:closeEdit")}
+                onMouseLeave={() => setHoveredBtn(null)}
+                onClick={closeEditStatus}
+              >
+                Close
+              </button>
+            </div>
+
+            {(() => {
+              const v = volunteersById.get(editStatus.volunteerId);
+              const inv = week ? inviteByVolunteerId.get(editStatus.volunteerId) : null;
+              if (!v || !inv) return null;
+
+              return (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ fontWeight: 1000, color: THEME.navy }}>{v.name}</div>
+                  <div style={{ fontSize: 12, color: THEME.muted, marginTop: 2 }}>
+                    Current: <b>{inv.status}</b>
+                  </div>
+
+                  <div style={{ marginTop: 12 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 900, color: THEME.navy }}>
+                      Set new status
+                    </label>
+                    <select
+                      value={editStatus.nextStatus}
+                      onChange={(e) => setEditStatus((s) => ({ ...s, nextStatus: e.target.value }))}
+                      style={{
+                        width: "100%",
+                        marginTop: 6,
+                        padding: "10px 10px",
+                        borderRadius: 12,
+                        border: `1px solid ${THEME.border}`,
+                        background: THEME.bg,
+                        color: THEME.navy,
+                        fontWeight: 900,
+                      }}
+                    >
+                      {STATUS_ORDER.map((s) => (
+                        <option key={s} value={s}>
+                          {s}
+                        </option>
+                      ))}
+                    </select>
+
+                    <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
+                      <button
+                        style={baseButtonStyle({
+                          hovered: hoveredBtn === "primary:applyEdit",
+                          disabled: false,
+                          variant: "primary",
+                        })}
+                        onMouseEnter={() => setHoveredBtn("primary:applyEdit")}
+                        onMouseLeave={() => setHoveredBtn(null)}
+                        onClick={() => {
+                          applyStatus(editStatus.volunteerId, editStatus.nextStatus);
+                          closeEditStatus();
+                        }}
+                      >
+                        Apply Change
+                      </button>
+
+                      <button
+                        style={baseButtonStyle({
+                          hovered: hoveredBtn === "primary:cancelEdit",
+                          disabled: false,
+                          variant: "primary",
+                        })}
+                        onMouseEnter={() => setHoveredBtn("primary:cancelEdit")}
+                        onMouseLeave={() => setHoveredBtn(null)}
+                        onClick={closeEditStatus}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+
+                    <div style={{ marginTop: 10, fontSize: 12, color: THEME.muted, lineHeight: 1.35 }}>
+                      Notes: Any edit will automatically unfinalize the list (if it was finalized). If capacity is exceeded,
+                      the app will auto-remove the most recent auto-added “Not Invited/Invited” row to avoid over-inviting.
+                    </div>
+                  </div>
+                </div>
+              );
+            })()}
           </div>
         </div>
       ) : null}
