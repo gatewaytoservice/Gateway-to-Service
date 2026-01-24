@@ -1,3 +1,4 @@
+// app/src/App.jsx
 import React, { useMemo, useState } from "react";
 import CoordinatorPage from "./pages/CoordinatorPage.jsx";
 import VolunteersPage from "./pages/VolunteersPage.jsx";
@@ -6,6 +7,9 @@ import HandoffPage from "./pages/HandoffPage.jsx";
 import ExportImportPage from "./pages/ExportImportPage.jsx";
 import PastMeetingsPage from "./pages/PastMeetingsPage.jsx"; // ✅ ADD BACK
 import { loadState, resetState, saveState } from "./state/storage.js";
+
+// ✅ Friday nudge helpers
+import { getUpcomingFridayISO, formatFriendlyDate } from "./utils/date.js";
 
 // ✅ Clerk Auth (added)
 import { SignedIn, SignedOut, SignIn, UserButton } from "@clerk/clerk-react";
@@ -25,6 +29,39 @@ const THEME = {
   muted: "#6B7280",
   shadow: "0 1px 10px rgba(36, 52, 71, 0.06)",
 };
+
+// =========================
+// Finalize Nudges (Friday @ noon CT, hourly until finalized)
+// =========================
+const CT_TZ = "America/Chicago";
+
+// Safely read "America/Chicago" date parts regardless of the device timezone.
+function getNowPartsInTZ(timeZone = CT_TZ) {
+  const dtf = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  const parts = dtf.formatToParts(new Date());
+  const get = (type) => parts.find((p) => p.type === type)?.value;
+
+  const weekday = get("weekday"); // "Fri"
+  const year = Number(get("year"));
+  const month = Number(get("month"));
+  const day = Number(get("day"));
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+
+  return { weekday, year, month, day, hour, minute, iso };
+}
 
 // ✅ Access restricted screen (added)
 function AccessRestricted() {
@@ -60,7 +97,6 @@ function AccessRestricted() {
             },
           }}
         />
-
       </div>
     </div>
   );
@@ -123,10 +159,62 @@ export default function App() {
   // Mobile: hamburger menu state could go here if needed
   const [menuOpen, setMenuOpen] = useState(false);
 
-
   // Auto-save whenever state changes
   React.useEffect(() => {
     saveState(appState);
+  }, [appState]);
+
+  // =========================
+  // ✅ FINALIZE NUDGES EFFECT
+  // =========================
+  React.useEffect(() => {
+    // Nudge checks are lightweight; run every minute.
+    const tick = () => {
+      try {
+        const fridayISO = getUpcomingFridayISO();
+        const week = (appState?.weeks || []).find((w) => w?.date === fridayISO) || null;
+
+        // Only nudge if the current "upcoming Friday" week exists and is NOT finalized
+        if (!week || week.finalized) return;
+
+        // We only start nudges on the actual Friday of that week, after 12pm CT
+        const nowCT = getNowPartsInTZ(CT_TZ);
+        if (nowCT.weekday !== "Fri") return;
+
+        // Ensure we're talking about the same Friday date in CT
+        // (prevents a device-timezone mismatch from nudging on the wrong day)
+        if (nowCT.iso !== fridayISO) return;
+
+        if (nowCT.hour < 12) return;
+
+        // Once-per-hour key (so it won't spam within the hour)
+        const hourKey = `${fridayISO}-${String(nowCT.hour).padStart(2, "0")}`;
+        const storageKey = `gts:finalizeNudge:lastHourKey`;
+
+        const lastHourKey = localStorage.getItem(storageKey);
+        if (lastHourKey === hourKey) return;
+
+        // Stamp immediately so even if user cancels, we don't re-prompt this hour
+        localStorage.setItem(storageKey, hourKey);
+
+        const ok = window.confirm(
+          `Reminder: The list for ${formatFriendlyDate(fridayISO)} is not finalized.\n\nFinalize it now?`
+        );
+
+        if (ok) {
+          setActiveTab("coordinator");
+          setMenuOpen(false);
+        }
+      } catch (e) {
+        // Never break the app because of a reminder check
+        console.error("Finalize nudge error:", e);
+      }
+    };
+
+    tick(); // run once on mount/state change
+    const id = window.setInterval(tick, 60 * 1000);
+
+    return () => window.clearInterval(id);
   }, [appState]);
 
   const Page = (() => {
@@ -203,7 +291,6 @@ export default function App() {
               </div>
             </div>
 
-            
             <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
           </header>
 
