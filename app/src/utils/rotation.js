@@ -8,6 +8,8 @@
 // - We want Invited + Confirmed + Declined to all “count” as activity.
 // - No separate “cooldown weeks” needed — cadence is the cooldown.
 
+// app/src/utils/rotation.js
+
 const CORE_ROLES_NO_COOLDOWN = new Set([
   "Chairperson",
   "Alt Chairperson",
@@ -18,6 +20,11 @@ const CORE_ROLES_NO_COOLDOWN = new Set([
   "Big Book Lead",
   "Alt Big Book Lead",
 ]);
+
+// ✅ Exported helper so other files can share the same “core roles are always eligible” rule.
+export function isCoreRoleNoCooldown(role) {
+  return CORE_ROLES_NO_COOLDOWN.has(role || "");
+}
 
 export const INVITE_CADENCES = [
   { key: "weekly", label: "Weekly", cooldownDays: 0 },
@@ -45,7 +52,7 @@ function dateToISO(date) {
 function addDaysISO(iso, days) {
   const dt = isoToDate(iso);
   if (!dt) return null;
-  dt.setDate(dt.getDate() + days);
+  dt.setDate(dt.getDate() + (Number(days) || 0));
   return dateToISO(dt);
 }
 
@@ -76,7 +83,7 @@ export function getCooldownDaysForVolunteer(v, defaultCadence = "monthly") {
   const cadence = getCadenceKey(v, defaultCadence);
 
   // Core roles always eligible
-  if (CORE_ROLES_NO_COOLDOWN.has(role)) return 0;
+  if (isCoreRoleNoCooldown(role)) return 0;
 
   // Weekly cadence = always eligible
   if (cadence === "weekly") return 0;
@@ -85,7 +92,15 @@ export function getCooldownDaysForVolunteer(v, defaultCadence = "monthly") {
   return def ? def.cooldownDays : 21; // fallback to monthly
 }
 
-// ✅ lastTouch includes Declined too (so declines affect cadence)
+/**
+ * ✅ lastTouch includes Declined too (so declines affect cadence)
+ *
+ * IMPORTANT (matches your “doesn’t count against them” rule):
+ * - lastTouch only comes from VOLUNTEER stamps:
+ *   lastInvitedAt / lastConfirmedDate / lastDeclinedDate
+ * - If a coordinator removes someone from a week WITHOUT actually sending an invite,
+ *   you should NOT stamp lastInvitedAt. (CoordinatorPage already follows this.)
+ */
 export function getLastTouchISO(v) {
   const lastInvited = normalizeISODate(v?.lastInvitedAt);
   const lastConfirmed = normalizeISODate(v?.lastConfirmedDate);
@@ -120,11 +135,19 @@ export function isEligibleThisWeek(v, fridayISO, defaultCadence = "monthly") {
 // 4) Oldest lastTouch first
 // 5) Name tie-break
 export function sortInviteCandidates(volunteers, fridayISO, opts = {}) {
-  const { excludeIds = new Set(), defaultCadence = "monthly", onlyActive = true } = opts;
+  const {
+    excludeIds = new Set(),
+    defaultCadence = "monthly",
+    onlyActive = true,
+  } = opts;
+
+  // ✅ Robust: accept Set, array, or any iterable.
+  const excludeSet =
+    excludeIds instanceof Set ? excludeIds : new Set(Array.from(excludeIds || []));
 
   const list = (volunteers || [])
-    .filter((v) => (onlyActive ? !!v.active : true))
-    .filter((v) => !excludeIds.has(v.id))
+    .filter((v) => (onlyActive ? !!v?.active : true))
+    .filter((v) => !!v?.id && !excludeSet.has(v.id))
     .map((v) => {
       const cadence = getCadenceKey(v, defaultCadence);
       const eligibleISO = getEligibleISO(v, fridayISO, defaultCadence);
@@ -183,7 +206,7 @@ export function buildAutoWeekInviteIds(volunteers, fridayISO, opts = {}) {
     ],
   } = opts;
 
-  const active = (volunteers || []).filter((v) => !!v.active);
+  const active = (volunteers || []).filter((v) => !!v?.active);
 
   const picked = [];
   const pickedSet = new Set();
