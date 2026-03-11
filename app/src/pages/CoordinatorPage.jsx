@@ -58,6 +58,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
+
 // ✅ Option 2 rotation (cadence + last touch)
 import {
   sortInviteCandidates,
@@ -65,6 +66,8 @@ import {
   getCadenceKey,
   buildAutoWeekInviteIds,
 } from "../utils/rotation.js";
+
+import { buildChairText } from "../utils/shareList.js";
 
 const CORE_ROLE_ORDER = [
   "Chairperson",
@@ -811,6 +814,19 @@ export default function CoordinatorPage({ appState, setAppState }) {
     }
   }
 
+  function handleCopyListForChair() {
+    if (!week) return;
+
+    const text = buildChairText({
+      fridayISO,
+      week,
+      volunteersById,
+      settings: appState.settings,
+    });
+
+    copyText(text);
+  }
+
   // =========================
   // SMS helpers (First-time logic + sms: link)
   // =========================
@@ -1294,9 +1310,27 @@ export default function CoordinatorPage({ appState, setAppState }) {
           >
             Create This Week
           </button>
+
+          
         ) : (
           <div style={{ marginTop: 10, color: THEME.muted }}>Week created ✅</div>
         )}
+
+        {week ? (
+          <button
+            onClick={handleCopyListForChair}
+            style={baseButtonStyle({
+              hovered: hoveredBtn === "primary:copyChair",
+              disabled: false,
+              variant: "primary",
+            })}
+            onMouseEnter={() => setHoveredBtn("primary:copyChair")}
+            onMouseLeave={() => setHoveredBtn(null)}
+            title="Copy a chair-ready list (names + phone numbers) to paste into a text"
+          >
+            Copy List for Chair
+          </button>
+        ) : null}
 
         {/* Delete week (Dev) — needed to test Auto-Create */}
         {week ? (
