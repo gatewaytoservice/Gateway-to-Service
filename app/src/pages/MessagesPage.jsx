@@ -3,6 +3,11 @@ import React from "react";
 export default function MessagesPage({ appState, setAppState }) {
   const msgs = appState.settings.messages;
 
+  /**
+   * Updates one saved message in appState.settings.messages
+   * - Keeps all other settings/messages intact
+   * - Saves automatically as the user types
+   */
   function setMsg(key, value) {
     setAppState((prev) => ({
       ...prev,
@@ -46,10 +51,29 @@ export default function MessagesPage({ appState, setAppState }) {
         value={msgs.firstTime}
         onChange={(v) => setMsg("firstTime", v)}
       />
+
+      <MessageBox
+        title="1st Step Lead Request"
+        value={msgs.firstStepLeadRequest}
+        onChange={(v) => setMsg("firstStepLeadRequest", v)}
+      />
+
+      {/* NEW: Used by DashboardPage.jsx "Text" button in Consider Pausing / Check-In */}
+      <MessageBox
+        title="Check-In / Consider Pausing"
+        value={msgs.checkIn}
+        onChange={(v) => setMsg("checkIn", v)}
+      />
     </div>
   );
 }
 
+/**
+ * Reusable message editor box
+ * - Displays a title
+ * - Shows auto-save note
+ * - Uses textarea for easy message editing
+ */
 function MessageBox({ title, value, onChange }) {
   return (
     <section style={styles.card}>
@@ -59,7 +83,7 @@ function MessageBox({ title, value, onChange }) {
       </div>
 
       <textarea
-        value={value}
+        value={value ?? ""}
         onChange={(e) => onChange(e.target.value)}
         rows={7}
         style={styles.textarea}
