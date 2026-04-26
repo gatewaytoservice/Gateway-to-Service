@@ -8,6 +8,14 @@ import ExportImportPage from "./pages/ExportImportPage.jsx";
 import PastMeetingsPage from "./pages/PastMeetingsPage.jsx"; // ✅ ADD BACK
 import { loadState, resetState, saveState } from "./state/storage.js";
 
+// ✅ NEW: Dashboard
+import DashboardPage from "./pages/DashboardPage.jsx";
+
+// Version 2 of Coordinator Page
+import CoordinatorPageV2 from "./pages/CoordinatorPageV2.jsx";
+//Version 2 of Volunteer Page
+import VolunteersPageV2 from "./pages/VolunteersPageV2.jsx";
+
 // ✅ Friday nudge helpers
 import { getUpcomingFridayISO, formatFriendlyDate } from "./utils/date.js";
 
@@ -141,9 +149,21 @@ function tabButtonStyle({ active, hovered }) {
 export default function App() {
   const tabs = useMemo(
     () => [
+      // ✅ NEW: Dashboard tab
+      { key: "dashboard", label: "Dashboard" },
+
       { key: "coordinator", label: "Coordinator" },
+
+      // ✅ ADD: Coordinator Page V2 tab
+      { key: "coordinatorV2", label: "Coordinator V2" },
+
       { key: "past", label: "Past" }, // ✅ ADD BACK
+
       { key: "volunteers", label: "Volunteers" },
+
+      // ✅ ADD: Volunteers Page V2 tab
+      { key: "volunteersV2", label: "Volunteers V2" },
+
       { key: "messages", label: "Messages" },
       { key: "handoff", label: "Handoff" },
       { key: "export", label: "Export" },
@@ -219,6 +239,19 @@ export default function App() {
 
   const Page = (() => {
     switch (activeTab) {
+      // ✅ NEW: Dashboard route
+      case "dashboard":
+        return <DashboardPage appState={appState} setAppState={setAppState} />;
+
+      // ✅ ADD: Coodinator Page V2 route (minimal addition)
+      case "coordinatorV2":
+        return <CoordinatorPageV2 appState={appState} setAppState={setAppState} />;
+
+      // ✅ ADD: Volunteer Page V2 route
+      case "volunteersV2":
+        return <VolunteersPageV2 appState={appState} setAppState={setAppState} />;
+
+      // ✅ ADD:
       case "past":
         return <PastMeetingsPage appState={appState} setAppState={setAppState} />; // ✅ WIRED
       case "volunteers":
@@ -282,7 +315,11 @@ export default function App() {
 
                 {/* Dev reset button */}
                 <button
-                  onClick={() => setAppState(resetState())}
+                  onClick={() => {
+                    const ok = window.prompt("Type RESET to wipe app data:");
+                    if (ok !== "RESET") return;
+                    setAppState(resetState());
+                  }}
                   style={styles.resetBtn}
                   title="Dev only"
                 >
