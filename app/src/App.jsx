@@ -66,7 +66,10 @@ function getNowPartsInTZ(timeZone = CT_TZ) {
   const hour = Number(get("hour"));
   const minute = Number(get("minute"));
 
-  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  const iso = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(
+    2,
+    "0"
+  )}`;
 
   return { weekday, year, month, day, hour, minute, iso };
 }
@@ -105,6 +108,121 @@ function AccessRestricted() {
             },
           }}
         />
+      </div>
+    </div>
+  );
+}
+
+// ✅ NEW: Landing page / service tool hub
+function LandingPage({ onSelectTool }) {
+  const tools = [
+    {
+      key: "gateway",
+      icon: "🤝",
+      title: "Gateway to Service",
+      description:
+        "Friday night volunteer coordination, reminders, confirmations, handoff notes, and service roles.",
+      buttonLabel: "Open Gateway Tool",
+      active: true,
+    },
+    {
+      key: "agents",
+      icon: "⚡",
+      title: "Agents of Action",
+      description:
+        "A future tool for organizing action-based service opportunities and volunteer support.",
+      buttonLabel: "Coming Soon",
+      active: false,
+    },
+    {
+      key: "broadHighway",
+      icon: "🛣️",
+      title: "Broad Highway Wanderers Group",
+      description:
+        "A future tool for group service, communication, and volunteer coordination.",
+      buttonLabel: "Coming Soon",
+      active: false,
+    },
+  ];
+
+  return (
+    <div style={styles.landing}>
+      <div style={styles.landingShell}>
+        <header style={styles.landingHeader}>
+          <div style={styles.landingBadge}>Volunteer Tools Hub</div>
+
+          <h1 style={styles.landingTitle}>Gateway to Service</h1>
+
+          <p style={styles.landingSubtitle}>
+            Volunteer tools built to help groups stay organized, communicate clearly,
+            and serve effectively.
+          </p>
+        </header>
+
+        <div style={styles.toolGrid}>
+          {tools.map((tool) => (
+            <button
+              key={tool.key}
+              type="button"
+              onClick={() => onSelectTool(tool.key)}
+              style={{
+                ...styles.toolCard,
+                opacity: tool.active ? 1 : 0.82,
+              }}
+            >
+              <div style={styles.toolTopRow}>
+                <div style={styles.toolIcon}>{tool.icon}</div>
+
+                {!tool.active && (
+                  <div style={styles.comingSoonPill}>Coming Soon</div>
+                )}
+              </div>
+
+              <h2 style={styles.toolTitle}>{tool.title}</h2>
+
+              <p style={styles.toolDescription}>{tool.description}</p>
+
+              <div
+                style={{
+                  ...styles.toolAction,
+                  background: tool.active
+                    ? "rgba(74, 143, 139, 0.12)"
+                    : "rgba(107, 114, 128, 0.10)",
+                  borderColor: tool.active
+                    ? "rgba(74, 143, 139, 0.35)"
+                    : "rgba(107, 114, 128, 0.25)",
+                  color: tool.active ? THEME.navy : THEME.muted,
+                }}
+              >
+                {tool.buttonLabel}
+              </div>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ✅ NEW: Placeholder page for future volunteer tools
+function ComingSoonPage({ title, icon, onBack }) {
+  return (
+    <div style={styles.landing}>
+      <div style={styles.placeholderShell}>
+        <button type="button" onClick={onBack} style={styles.backToHubBtn}>
+          ← Back to Service Hub
+        </button>
+
+        <div style={styles.placeholderCard}>
+          <div style={styles.placeholderIcon}>{icon}</div>
+
+          <h1 style={styles.placeholderTitle}>{title}</h1>
+
+          <p style={styles.placeholderText}>
+            This volunteer tool has a home now. We can build this section next when
+            you are ready.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -172,6 +290,10 @@ export default function App() {
   );
 
   const [activeTab, setActiveTab] = useState("coordinator");
+
+  // ✅ NEW: controls the new landing page / volunteer tool hub
+  const [activeTool, setActiveTool] = useState(null);
+
   const [appState, setAppState] = useState(() => loadState());
 
   // Hover state for nav tabs (makes theme feel alive)
@@ -192,7 +314,8 @@ export default function App() {
     const tick = () => {
       try {
         const fridayISO = getUpcomingFridayISO();
-        const week = (appState?.weeks || []).find((w) => w?.date === fridayISO) || null;
+        const week =
+          (appState?.weeks || []).find((w) => w?.date === fridayISO) || null;
 
         // Only nudge if the current "upcoming Friday" week exists and is NOT finalized
         if (!week || week.finalized) return;
@@ -218,10 +341,13 @@ export default function App() {
         localStorage.setItem(storageKey, hourKey);
 
         const ok = window.confirm(
-          `Reminder: The list for ${formatFriendlyDate(fridayISO)} is not finalized.\n\nFinalize it now?`
+          `Reminder: The list for ${formatFriendlyDate(
+            fridayISO
+          )} is not finalized.\n\nFinalize it now?`
         );
 
         if (ok) {
+          setActiveTool("gateway");
           setActiveTab("coordinator");
           setMenuOpen(false);
         }
@@ -245,15 +371,21 @@ export default function App() {
 
       // ✅ ADD: Coodinator Page V2 route (minimal addition)
       case "coordinatorV2":
-        return <CoordinatorPageV2 appState={appState} setAppState={setAppState} />;
+        return (
+          <CoordinatorPageV2 appState={appState} setAppState={setAppState} />
+        );
 
       // ✅ ADD: Volunteer Page V2 route
       case "volunteersV2":
-        return <VolunteersPageV2 appState={appState} setAppState={setAppState} />;
+        return (
+          <VolunteersPageV2 appState={appState} setAppState={setAppState} />
+        );
 
       // ✅ ADD:
       case "past":
-        return <PastMeetingsPage appState={appState} setAppState={setAppState} />; // ✅ WIRED
+        return (
+          <PastMeetingsPage appState={appState} setAppState={setAppState} />
+        ); // ✅ WIRED
       case "volunteers":
         return <VolunteersPage appState={appState} setAppState={setAppState} />;
       case "messages":
@@ -276,107 +408,139 @@ export default function App() {
       </SignedOut>
 
       <SignedIn>
-        <div style={styles.app}>
-          <header style={styles.header}>
-            {/* Banner block */}
-            <div style={styles.brandRow}>
-              <div style={styles.brandLeft}>
-                <div style={styles.brandTitle}>Gateway to Service</div>
-                <div style={styles.brandSubtitle}>
-                  {appState.settings.mission || MISSION}
+        {!activeTool && <LandingPage onSelectTool={setActiveTool} />}
+
+        {activeTool === "agents" && (
+          <ComingSoonPage
+            title="Agents of Action"
+            icon="⚡"
+            onBack={() => setActiveTool(null)}
+          />
+        )}
+
+        {activeTool === "broadHighway" && (
+          <ComingSoonPage
+            title="Broad Highway Wanderers Group"
+            icon="🛣️"
+            onBack={() => setActiveTool(null)}
+          />
+        )}
+
+        {activeTool === "gateway" && (
+          <div style={styles.app}>
+            <header style={styles.header}>
+              {/* Banner block */}
+              <div style={styles.brandRow}>
+                <div style={styles.brandLeft}>
+                  <div style={styles.brandTitle}>Gateway to Service</div>
+                  <div style={styles.brandSubtitle}>
+                    {appState.settings.mission || MISSION}
+                  </div>
+                </div>
+
+                {/* ✅ Added UserButton next to your existing Reset button */}
+                {/* Header actions: mobile menu + user + reset */}
+                <div
+                  className="gts-headerActions"
+                  style={{
+                    display: "flex",
+                    gap: 10,
+                    alignItems: "center",
+                    flexWrap: "wrap",
+                  }}
+                >
+                  {/* ✅ NEW: Back to landing page */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveTool(null);
+                      setMenuOpen(false);
+                    }}
+                    style={styles.resetBtn}
+                  >
+                    Service Hub
+                  </button>
+
+                  {/* Mobile hamburger (CSS controls visibility) */}
+                  <button
+                    className="gts-menuBtn"
+                    type="button"
+                    onClick={() => setMenuOpen((v) => !v)}
+                    aria-expanded={menuOpen}
+                    aria-label="Open menu"
+                    style={styles.resetBtn}
+                  >
+                    ☰ Menu
+                  </button>
+
+                  {/* Clerk user menu */}
+                  <UserButton />
+
+                  {/* Dev reset button */}
+                  <button
+                    onClick={() => {
+                      const ok = window.prompt("Type RESET to wipe app data:");
+                      if (ok !== "RESET") return;
+                      setAppState(resetState());
+                    }}
+                    style={styles.resetBtn}
+                    title="Dev only"
+                  >
+                    Reset App (Dev)
+                  </button>
                 </div>
               </div>
 
-              {/* ✅ Added UserButton next to your existing Reset button */}
-              {/* Header actions: mobile menu + user + reset */}
-              <div
-                className="gts-headerActions"
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  alignItems: "center",
-                  flexWrap: "wrap",
-                }}
-              >
-                {/* Mobile hamburger (CSS controls visibility) */}
-                <button
-                  className="gts-menuBtn"
-                  type="button"
-                  onClick={() => setMenuOpen((v) => !v)}
-                  aria-expanded={menuOpen}
-                  aria-label="Open menu"
-                  style={styles.resetBtn}
-                >
-                  ☰ Menu
-                </button>
+              <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
+            </header>
 
-                {/* Clerk user menu */}
-                <UserButton />
-
-                {/* Dev reset button */}
-                <button
-                  onClick={() => {
-                    const ok = window.prompt("Type RESET to wipe app data:");
-                    if (ok !== "RESET") return;
-                    setAppState(resetState());
-                  }}
-                  style={styles.resetBtn}
-                  title="Dev only"
-                >
-                  Reset App (Dev)
-                </button>
+            {/* Mobile menu panel (CSS will position + show only on phones) */}
+            {menuOpen && (
+              <div className="gts-menuPanel">
+                {tabs.map((t) => {
+                  const isActive = activeTab === t.key;
+                  return (
+                    <button
+                      key={t.key}
+                      className={`gts-menuItem ${isActive ? "isActive" : ""}`}
+                      type="button"
+                      onClick={() => {
+                        setActiveTab(t.key);
+                        setMenuOpen(false);
+                      }}
+                    >
+                      {t.label}
+                    </button>
+                  );
+                })}
               </div>
-            </div>
+            )}
 
-            <div style={styles.devHint}>Dev tools won’t show in the final version.</div>
-          </header>
+            <main style={styles.main}>{Page}</main>
 
-          {/* Mobile menu panel (CSS will position + show only on phones) */}
-          {menuOpen && (
-            <div className="gts-menuPanel">
+            <nav className="gts-nav" style={styles.nav}>
               {tabs.map((t) => {
                 const isActive = activeTab === t.key;
+                const isHovered = hoveredTab === t.key;
+
                 return (
                   <button
                     key={t.key}
-                    className={`gts-menuItem ${isActive ? "isActive" : ""}`}
-                    type="button"
                     onClick={() => {
                       setActiveTab(t.key);
                       setMenuOpen(false);
                     }}
+                    style={tabButtonStyle({ active: isActive, hovered: isHovered })}
+                    onMouseEnter={() => setHoveredTab(t.key)}
+                    onMouseLeave={() => setHoveredTab(null)}
                   >
                     {t.label}
                   </button>
                 );
               })}
-            </div>
-          )}
-
-          <main style={styles.main}>{Page}</main>
-
-          <nav className="gts-nav" style={styles.nav}>
-            {tabs.map((t) => {
-              const isActive = activeTab === t.key;
-              const isHovered = hoveredTab === t.key;
-
-              return (
-                <button
-                  key={t.key}
-                  onClick={() => {
-                    setActiveTab(t.key);
-                    setMenuOpen(false);
-                  }}
-                  style={tabButtonStyle({ active: isActive, hovered: isHovered })}
-                  onMouseEnter={() => setHoveredTab(t.key)}
-                  onMouseLeave={() => setHoveredTab(null)}
-                >
-                  {t.label}
-                </button>
-              );
-            })}
-          </nav>
-        </div>
+            </nav>
+          </div>
+        )}
       </SignedIn>
     </>
   );
@@ -464,5 +628,190 @@ const styles = {
     borderTop: `1px solid ${THEME.border}`,
     background: THEME.card,
     boxShadow: "0 -6px 18px rgba(36, 52, 71, 0.06)",
+  },
+
+  // =========================
+  // ✅ NEW: Landing page styles
+  // =========================
+  landing: {
+    minHeight: "100vh",
+    padding: 24,
+    background: THEME.bg,
+    fontFamily: "system-ui, -apple-system, Arial",
+  },
+
+  landingShell: {
+    maxWidth: 1000,
+    margin: "0 auto",
+  },
+
+  landingHeader: {
+    maxWidth: 760,
+    margin: "0 auto 30px",
+    textAlign: "center",
+    paddingTop: 42,
+  },
+
+  landingBadge: {
+    display: "inline-block",
+    marginBottom: 14,
+    padding: "7px 12px",
+    borderRadius: 999,
+    background: "rgba(74, 143, 139, 0.12)",
+    border: "1px solid rgba(74, 143, 139, 0.28)",
+    color: THEME.navy,
+    fontSize: 12,
+    fontWeight: 900,
+  },
+
+  landingTitle: {
+    color: THEME.navy,
+    fontSize: 36,
+    lineHeight: 1.1,
+    margin: "0 0 12px",
+    letterSpacing: "-0.6px",
+  },
+
+  landingSubtitle: {
+    color: THEME.muted,
+    fontSize: 15,
+    lineHeight: 1.55,
+    margin: 0,
+  },
+
+  toolGrid: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(250px, 1fr))",
+    gap: 18,
+  },
+
+  toolCard: {
+    background: THEME.card,
+    border: `1px solid ${THEME.border}`,
+    borderTop: `5px solid ${THEME.teal}`,
+    borderRadius: 18,
+    padding: 22,
+    textAlign: "left",
+    cursor: "pointer",
+    boxShadow: THEME.shadow,
+    minHeight: 245,
+    display: "flex",
+    flexDirection: "column",
+    transition:
+      "transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease",
+  },
+
+  toolTopRow: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 10,
+    marginBottom: 14,
+  },
+
+  toolIcon: {
+    width: 50,
+    height: 50,
+    borderRadius: 16,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    background: "rgba(74, 143, 139, 0.10)",
+    border: "1px solid rgba(74, 143, 139, 0.22)",
+    fontSize: 27,
+  },
+
+  comingSoonPill: {
+    padding: "5px 8px",
+    borderRadius: 999,
+    background: "rgba(107, 114, 128, 0.10)",
+    border: "1px solid rgba(107, 114, 128, 0.22)",
+    color: THEME.muted,
+    fontSize: 11,
+    fontWeight: 900,
+    whiteSpace: "nowrap",
+  },
+
+  toolTitle: {
+    color: THEME.navy,
+    fontSize: 20,
+    lineHeight: 1.2,
+    margin: "0 0 8px",
+  },
+
+  toolDescription: {
+    color: THEME.muted,
+    fontSize: 14,
+    lineHeight: 1.45,
+    margin: 0,
+    flex: 1,
+  },
+
+  toolAction: {
+    marginTop: 18,
+    padding: "10px 12px",
+    borderRadius: 12,
+    border: "1px solid rgba(74, 143, 139, 0.35)",
+    fontSize: 13,
+    fontWeight: 900,
+    textAlign: "center",
+  },
+
+  // =========================
+  // ✅ NEW: Coming soon placeholder styles
+  // =========================
+  placeholderShell: {
+    maxWidth: 760,
+    margin: "0 auto",
+    paddingTop: 32,
+  },
+
+  backToHubBtn: {
+    fontSize: 13,
+    padding: "9px 12px",
+    borderRadius: 12,
+    border: `1px solid rgba(36, 52, 71, 0.28)`,
+    background: THEME.card,
+    color: THEME.navy,
+    fontWeight: 900,
+    cursor: "pointer",
+    marginBottom: 18,
+    boxShadow: THEME.shadow,
+  },
+
+  placeholderCard: {
+    background: THEME.card,
+    border: `1px solid ${THEME.border}`,
+    borderTop: `5px solid ${THEME.teal}`,
+    borderRadius: 20,
+    padding: 28,
+    textAlign: "center",
+    boxShadow: THEME.shadow,
+  },
+
+  placeholderIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    margin: "0 auto 16px",
+    background: "rgba(74, 143, 139, 0.10)",
+    border: "1px solid rgba(74, 143, 139, 0.22)",
+    fontSize: 34,
+  },
+
+  placeholderTitle: {
+    color: THEME.navy,
+    fontSize: 28,
+    margin: "0 0 10px",
+  },
+
+  placeholderText: {
+    color: THEME.muted,
+    fontSize: 15,
+    lineHeight: 1.5,
+    margin: 0,
   },
 };
