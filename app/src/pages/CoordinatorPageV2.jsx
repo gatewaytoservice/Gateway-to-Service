@@ -1170,9 +1170,6 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
         altRole: ALT_ROLE_MAP.Chairperson,
         messageGroup: "service",
       }),
-      getConfirmedRoleRecipientEntry("List Coordinator", {
-        messageGroup: "service",
-      }),
     ].filter(Boolean);
 
     const seen = new Set();
