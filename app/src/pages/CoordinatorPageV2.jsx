@@ -1038,7 +1038,9 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
 
   // Messages
   function fillTemplate(template, volunteerName) {
-    return (template || "").replaceAll("[Name]", volunteerName || "");
+    return String(template || "")
+      .replaceAll("[Name]", volunteerName || "")
+      .replaceAll("[Date]", formatFriendlyDate(fridayISO));
   }
 
   function fillListTemplate(template, entry, listText) {
@@ -1367,8 +1369,16 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   function getTemplateFor(kind, volunteer) {
     const msgs = appState?.settings?.messages || {};
     const firstTime = !!volunteer?.firstTime;
+    const role = getRole(volunteer);
+
+    const isGatewayEmployeeRole =
+      role === "Gateway Employee" || role === "Alt Gateway Employee";
 
     if (kind === "invite") {
+      if (isGatewayEmployeeRole && msgs.gatewayEmployee) {
+        return msgs.gatewayEmployee;
+      }
+
       if (firstTime && msgs.firstTime) return msgs.firstTime;
       return msgs.invite || "";
     }
