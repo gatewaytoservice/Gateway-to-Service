@@ -81,6 +81,12 @@ export const MONTHLY_PATTERN_OPTIONS = [
   { key: "last_friday", label: "Last Friday" },
 ];
 
+// ✅ Backfill anchor for this cadence cleanup pass.
+// This does NOT force the app to always use this date.
+// It gives CoordinatorPageV2 / VolunteersPageV2 a stable fallback when older data
+// has no last response / last invite date to anchor from.
+export const CADENCE_BACKFILL_ANCHOR_ISO = "2026-06-26";
+
 // --------------------------------------------------
 // ISO date helpers (YYYY-MM-DD only)
 // --------------------------------------------------
@@ -225,8 +231,10 @@ export function getNextInviteDateISO(v) {
  */
 export function isVolunteerDueThisWeek(v, fridayISO) {
   const dueISO = getNextInviteDateISO(v);
-  if (!dueISO) return false;
-  return fridayISO >= dueISO;
+  const friday = normalizeISODate(fridayISO);
+
+  if (!dueISO || !friday) return false;
+  return friday >= dueISO;
 }
 
 // Backward-friendly name so CoordinatorPageV2 can swap more easily later.
@@ -245,9 +253,8 @@ export function getEligibleISO(v) {
  * If nextInviteDate is missing, fall back to the confirmed Friday.
  *
  * IMPORTANT:
- * - Only call this when a volunteer is actually CONFIRMED.
- * - Invite sent should NOT advance nextInviteDate.
- * - Decline should NOT advance nextInviteDate.
+ * - This helper is kept for existing Confirmed behavior.
+ * - New response-based behavior should use getNextInviteDateAfterActivity().
  */
 export function getNextInviteDateAfterConfirm(v, confirmedFridayISO) {
   const cadence = getCadenceKey(v, "monthly");
@@ -300,6 +307,83 @@ export function getNextInviteDateAfterConfirm(v, confirmedFridayISO) {
   return getFridayByOccurrenceIndex(fallbackTarget.year, fallbackTarget.monthIndex, occurrenceIndex);
 }
 
+/**
+ * ✅ NEW:
+ * Calculate the next invite date from a specific Friday activity anchor.
+ *
+ * Use this for:
+ * - Confirmed
+ * - Declined / No
+ * - No Response
+ *
+ * Why this exists:
+ * getNextInviteDateAfterConfirm() uses the current nextInviteDate first.
+ * That is useful for existing scheduling, but if nextInviteDate is old/stale,
+ * a response on June 26, 2026 could accidentally advance from the old date.
+ *
+ * This helper forces the cadence calculation to anchor from the Friday being worked.
+ */
+export function getNextInviteDateAfterActivity(v, activityFridayISO) {
+  const activityISO = normalizeISODate(activityFridayISO);
+  if (!activityISO) return null;
+
+  return getNextInviteDateAfterConfirm(
+    {
+      ...v,
+      nextInviteDate: activityISO,
+    },
+    activityISO
+  );
+}
+
+/**
+ * ✅ NEW:
+ * Returns the latest known response/invite activity date.
+ *
+ * This is useful for backfilling older volunteers when nextInviteDate needs to be
+ * recalculated according to the volunteer's cadence.
+ */
+export function getLatestResponseOrInviteISO(v) {
+  const candidates = [
+    normalizeISODate(v?.lastConfirmedDate),
+    normalizeISODate(v?.lastDeclinedDate),
+    normalizeISODate(v?.lastInvitedAt),
+  ].filter(Boolean);
+
+  if (!candidates.length) return null;
+  candidates.sort(); // ISO strings sort oldest -> newest
+  return candidates[candidates.length - 1];
+}
+
+/**
+ * ✅ NEW:
+ * Pick the date we should use to recalculate a volunteer's schedule.
+ *
+ * Priority:
+ * 1) latest response or invite date
+ * 2) fallback date, defaulting to 2026-06-26 for this cleanup pass
+ */
+export function getCadenceBackfillAnchorISO(v, fallbackISO = CADENCE_BACKFILL_ANCHOR_ISO) {
+  return getLatestResponseOrInviteISO(v) || normalizeISODate(fallbackISO);
+}
+
+/**
+ * ✅ NEW:
+ * Calculate nextInviteDate from the volunteer's latest response/invite date.
+ *
+ * If the volunteer has no last response/invite date, it uses the fallback date.
+ * Default fallback is June 26, 2026.
+ */
+export function getNextInviteDateFromLastResponseOrInvite(
+  v,
+  fallbackISO = CADENCE_BACKFILL_ANCHOR_ISO
+) {
+  const anchorISO = getCadenceBackfillAnchorISO(v, fallbackISO);
+  if (!anchorISO) return null;
+
+  return getNextInviteDateAfterActivity(v, anchorISO);
+}
+
 // --------------------------------------------------
 // ✅ NEW: Snooze helpers (V2-friendly rollover control)
 // --------------------------------------------------
@@ -324,11 +408,24 @@ export function getSnoozedNextInviteDateISO(fridayISO, snoozeWeeks = 1) {
 }
 
 /**
- * "No Response" snooze rule (your stated rule):
- * - If marked No Response by Wednesday, their next invite date should be
- *   2 weeks from the Friday they were invited for (Friday anchor).
+ * ✅ NEW:
+ * Clearer helper for the exact rule:
+ * - If a volunteer was due but was not invited this week,
+ *   move their nextInviteDate to the next Friday.
+ */
+export function getNextInviteDateAfterNotInvited(fridayISO) {
+  return getSnoozedNextInviteDateISO(fridayISO, 1);
+}
+
+/**
+ * "No Response" snooze rule.
  *
- * Default = 2 weeks.
+ * Kept for backward compatibility.
+ *
+ * New cadence-based No Response behavior should use:
+ * getNextInviteDateAfterActivity(v, fridayISO)
+ *
+ * Default remains 2 weeks so older code using this helper will not break.
  */
 export function getNoResponseNextInviteDateISO(fridayISO, snoozeWeeks = 2) {
   return getSnoozedNextInviteDateISO(fridayISO, snoozeWeeks);

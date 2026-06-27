@@ -79,11 +79,14 @@ import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
 // ✅ Scheduling System V2 (date-driven)
 import {
+  CADENCE_BACKFILL_ANCHOR_ISO,
   sortInviteCandidates,
   isEligibleThisWeek,
   getCadenceKey,
   buildAutoWeekInviteIds,
-  getNextInviteDateAfterConfirm,
+  getNextInviteDateAfterActivity,
+  getNextInviteDateAfterNotInvited,
+  getNextInviteDateFromLastResponseOrInvite,
 } from "../utils/rotationV2.js";
 
 import { buildChairText } from "../utils/shareList.js";
@@ -103,6 +106,10 @@ const CORE_ROLE_ORDER = [
 ];
 
 const STATUS_ORDER = ["Not Invited", "Invited", "Confirmed", "Declined", "No Response"];
+
+// ✅ One-time automatic cleanup flag.
+// This prevents the June 26 repair from running every time the app opens.
+const CADENCE_REPAIR_SETTING_KEY = "v2CadenceRepair20260626AppliedAt";
 
 function getRole(v) {
   return v.coreRole || "Volunteer";
@@ -166,6 +173,12 @@ function formatPhoneUS(input) {
 function getNextInviteISOForDisplay(v) {
   const fromField = String(v?.nextInviteDate || "").trim();
   return fromField || "";
+}
+
+function shouldUseDateUpdate(existingISO, candidateISO) {
+  if (!candidateISO) return false;
+  if (!existingISO) return true;
+  return existingISO !== candidateISO;
 }
 
 // =========================
@@ -421,6 +434,157 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     message: "",
   });
 
+  // ✅ Automatic one-time roster-wide cadence repair.
+  //
+  // Why this exists:
+  // - The status-update logic now works going forward.
+  // - But older volunteers may already have statuses/history from before the cadence update.
+  // - This repairs the old data once using June 26, 2026 as the anchor.
+  //
+  // Rules:
+  // - June 26 week Confirmed => update by cadence from 2026-06-26 and set lastConfirmedDate
+  // - June 26 week Declined / No Response => update by cadence from 2026-06-26 and set lastDeclinedDate
+  // - June 26 week Not Invited => move to 2026-07-03
+  // - Other volunteers with blank/stale nextInviteDate => repair from last response/invite, or fallback anchor
+  // - Do not keep running weekly.
+  useEffect(() => {
+    if (appState?.settings?.[CADENCE_REPAIR_SETTING_KEY]) return;
+
+    setAppState((prev) => {
+      if (prev?.settings?.[CADENCE_REPAIR_SETTING_KEY]) return prev;
+
+      const repairAnchorISO = CADENCE_BACKFILL_ANCHOR_ISO || "2026-06-26";
+      const nextFridayAfterRepairAnchor = getNextInviteDateAfterNotInvited(repairAnchorISO);
+
+      const repairWeek =
+        (prev.weeks || []).find((w) => w.date === repairAnchorISO) || null;
+
+      const repairInviteByVolunteerId = new Map(
+        (repairWeek?.invites || []).map((inv) => [inv.volunteerId, inv])
+      );
+
+      const nowISO = new Date().toISOString();
+      let repairCount = 0;
+
+      const updatedVolunteers = (prev.volunteers || []).map((v) => {
+        if (!v?.id) return v;
+
+        const existingNextInviteDate = getNextInviteISOForDisplay(v);
+        const repairInvite = repairInviteByVolunteerId.get(v.id) || null;
+        const repairStatus = repairInvite?.status || null;
+
+        // 1) Repair volunteers who were on the June 26 week list.
+        if (repairStatus === "Confirmed") {
+          const nextInviteDate = getNextInviteDateAfterActivity(v, repairAnchorISO);
+          const patch = {
+            lastConfirmedDate: repairAnchorISO,
+            nextInviteDate: nextInviteDate || existingNextInviteDate || "",
+          };
+
+          if (
+            v.lastConfirmedDate !== patch.lastConfirmedDate ||
+            shouldUseDateUpdate(existingNextInviteDate, patch.nextInviteDate)
+          ) {
+            repairCount += 1;
+            return { ...v, ...patch };
+          }
+
+          return v;
+        }
+
+        if (repairStatus === "Declined" || repairStatus === "No Response") {
+          const nextInviteDate = getNextInviteDateAfterActivity(v, repairAnchorISO);
+          const patch = {
+            lastDeclinedDate: repairAnchorISO,
+            nextInviteDate: nextInviteDate || existingNextInviteDate || "",
+          };
+
+          if (
+            v.lastDeclinedDate !== patch.lastDeclinedDate ||
+            shouldUseDateUpdate(existingNextInviteDate, patch.nextInviteDate)
+          ) {
+            repairCount += 1;
+            return { ...v, ...patch };
+          }
+
+          return v;
+        }
+
+        if (repairStatus === "Not Invited") {
+          const patch = {
+            nextInviteDate: nextFridayAfterRepairAnchor || existingNextInviteDate || "",
+          };
+
+          if (shouldUseDateUpdate(existingNextInviteDate, patch.nextInviteDate)) {
+            repairCount += 1;
+            return { ...v, ...patch };
+          }
+
+          return v;
+        }
+
+        // 2) Leave "Invited" alone.
+        // If they are still waiting, the coordinator should mark Confirmed / Declined / No Response.
+        if (repairStatus === "Invited") {
+          return v;
+        }
+
+        // 3) Roster-wide repair for volunteers not on the June 26 list.
+        //
+        // If nextInviteDate is blank or stale by June 26, calculate from their latest:
+        // lastConfirmedDate, lastDeclinedDate, lastInvitedAt, or fallback anchor.
+        const calculatedNextInviteDate = getNextInviteDateFromLastResponseOrInvite(v, repairAnchorISO);
+        if (!calculatedNextInviteDate) return v;
+
+        const repairedNextInviteDate =
+          calculatedNextInviteDate <= repairAnchorISO
+            ? nextFridayAfterRepairAnchor
+            : calculatedNextInviteDate;
+
+        const hasBlankSchedule = !existingNextInviteDate;
+        const hasStaleSchedule = existingNextInviteDate && existingNextInviteDate <= repairAnchorISO;
+
+        if ((hasBlankSchedule || hasStaleSchedule) && repairedNextInviteDate) {
+          repairCount += 1;
+          return {
+            ...v,
+            nextInviteDate: repairedNextInviteDate,
+          };
+        }
+
+        return v;
+      });
+
+      const updatedWeeks = (prev.weeks || []).map((w) =>
+        repairWeek && w.id === repairWeek.id
+          ? {
+              ...w,
+              cadenceRepairAppliedAt: nowISO,
+              cadenceRepairAnchorISO: repairAnchorISO,
+            }
+          : w
+      );
+
+      if (repairCount > 0) {
+        setTimeout(() => {
+          setToast(`Cadence repair applied to ${repairCount} volunteer${repairCount === 1 ? "" : "s"} ✅`);
+          setTimeout(() => setToast(""), 1800);
+        }, 0);
+      }
+
+      return {
+        ...prev,
+        volunteers: updatedVolunteers,
+        weeks: updatedWeeks,
+        settings: {
+          ...(prev.settings || {}),
+          [CADENCE_REPAIR_SETTING_KEY]: nowISO,
+          cadenceRepairAnchorISO: repairAnchorISO,
+        },
+      };
+    });
+  }, [appState?.settings?.[CADENCE_REPAIR_SETTING_KEY], setAppState]);
+
   // Lock scroll when any modal is open
   useEffect(() => {
     const anyModalOpen = showLastMinute || smsModal.open || editStatus.open || altPromptOpen;
@@ -544,6 +708,24 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     return { ...weekObj, finalized: false };
   }
 
+  // ✅ Backfill older volunteer records that are missing nextInviteDate.
+  // This preserves existing schedules and only fills blanks using:
+  // last response / last invite, or June 26, 2026 as the fallback from rotationV2.js.
+  function getVolunteersWithBackfilledSchedule(volunteers) {
+    return (volunteers || []).map((v) => {
+      if (!v?.id) return v;
+      if (String(v?.nextInviteDate || "").trim()) return v;
+
+      const nextInviteDate = getNextInviteDateFromLastResponseOrInvite(v);
+      if (!nextInviteDate) return v;
+
+      return {
+        ...v,
+        nextInviteDate,
+      };
+    });
+  }
+
   // Auto backfill (Declined/No Response)
   function maybeBackfillAfterDrop(nextState, weekObj) {
     if (!weekObj) return { nextState, didAdd: false, addedName: "" };
@@ -622,10 +804,23 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
       invites: invites.filter((inv) => inv.id !== toRemove.id),
     };
 
-    const updatedState = {
+    let updatedState = {
       ...nextState,
       weeks: nextState.weeks.map((w) => (w.id === weekObj.id ? patchedWeek : w)),
     };
+
+    // ✅ Cadence update:
+    // If overflow trim removes someone who was due this week, they were not used/invited.
+    // Move them to next Friday so they are ready for the coordinator next week.
+    const nextFridayISO = getNextInviteDateAfterNotInvited(fridayISO);
+    if (removedV?.id && nextFridayISO && isEligibleThisWeek(removedV, fridayISO)) {
+      updatedState = {
+        ...updatedState,
+        volunteers: (updatedState.volunteers || []).map((v) =>
+          v.id === removedV.id ? { ...v, nextInviteDate: nextFridayISO } : v
+        ),
+      };
+    }
 
     return { nextState: updatedState, didRemove: true, removedName: removedV?.name || "" };
   }
@@ -633,6 +828,10 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   // Create week
   function createWeekIfMissing() {
     if (week) return;
+
+    // ✅ Fill blank nextInviteDate fields before building the week.
+    // Existing nextInviteDate values are not changed here.
+    const volunteersForScheduling = getVolunteersWithBackfilledSchedule(appState.volunteers || []);
 
     const targetCount = getTargetCount(appState);
     const used = new Set();
@@ -647,14 +846,14 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
 
     // 1) Pinned roles first
     for (const role of CORE_ROLE_ORDER) {
-      const v = (appState.volunteers || []).find((x) => x.active && (x.coreRole || "") === role);
+      const v = (volunteersForScheduling || []).find((x) => x.active && (x.coreRole || "") === role);
       if (v) pushId(v.id);
       if (initialIds.length >= targetCount) break;
     }
 
     // 2) Fill remainder from dueNow only
     if (initialIds.length < targetCount) {
-      const candidates = sortInviteCandidates(appState.volunteers || [], fridayISO, {
+      const candidates = sortInviteCandidates(volunteersForScheduling || [], fridayISO, {
         excludeIds: used,
         onlyActive: true,
       });
@@ -668,7 +867,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
 
     // 3) Optional fallback
     if (initialIds.length === 0 && typeof buildAutoWeekInviteIds === "function") {
-      const fallbackIds = buildAutoWeekInviteIds(appState.volunteers || [], fridayISO, {
+      const fallbackIds = buildAutoWeekInviteIds(volunteersForScheduling || [], fridayISO, {
         targetCount,
         pinnedRoles: CORE_ROLE_ORDER,
       });
@@ -700,10 +899,43 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
       invites: initialInvites,
     });
 
-    setAppState((prev) => ({
-      ...prev,
-      weeks: [newWeek, ...prev.weeks],
-    }));
+    setAppState((prev) => {
+      const pickedIds = new Set(initialIds);
+      const nextFridayISO = getNextInviteDateAfterNotInvited(fridayISO);
+      const scheduledById = new Map(volunteersForScheduling.map((v) => [v.id, v]));
+
+      const updatedVolunteers = (prev.volunteers || []).map((v) => {
+        const scheduledVersion = scheduledById.get(v.id) || v;
+        const withBackfill =
+          !String(v?.nextInviteDate || "").trim() && String(scheduledVersion?.nextInviteDate || "").trim()
+            ? { ...v, nextInviteDate: scheduledVersion.nextInviteDate }
+            : v;
+
+        // ✅ Cadence update:
+        // If a volunteer was due for this Friday but did NOT get picked,
+        // move them to next Friday so the coordinator can invite them then.
+        if (
+          nextFridayISO &&
+          withBackfill?.active &&
+          withBackfill?.id &&
+          !pickedIds.has(withBackfill.id) &&
+          isEligibleThisWeek(withBackfill, fridayISO)
+        ) {
+          return {
+            ...withBackfill,
+            nextInviteDate: nextFridayISO,
+          };
+        }
+
+        return withBackfill;
+      });
+
+      return {
+        ...prev,
+        volunteers: updatedVolunteers,
+        weeks: [newWeek, ...prev.weeks],
+      };
+    });
   }
 
   function addVolunteerToThisWeek(volunteerId) {
@@ -748,12 +980,29 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   function removeFromThisWeek(volunteerId) {
     if (!week) return;
 
-    setAppState((prev) =>
-      patchWeek(prev, week.id, (w) => ({
+    setAppState((prev) => {
+      const v = (prev.volunteers || []).find((vv) => vv.id === volunteerId) || null;
+      const nextFridayISO = getNextInviteDateAfterNotInvited(fridayISO);
+
+      let nextState = patchWeek(prev, week.id, (w) => ({
         ...unfinalizeWeekIfNeeded(w),
         invites: (w.invites || []).filter((i) => i.volunteerId !== volunteerId),
-      }))
-    );
+      }));
+
+      // ✅ Cadence update:
+      // Removing someone from this week means they were not used/invited this week.
+      // If they were due, move them to next Friday.
+      if (v?.id && nextFridayISO && isEligibleThisWeek(v, fridayISO)) {
+        nextState = {
+          ...nextState,
+          volunteers: (nextState.volunteers || []).map((vv) =>
+            vv.id === volunteerId ? { ...vv, nextInviteDate: nextFridayISO } : vv
+          ),
+        };
+      }
+
+      return nextState;
+    });
   }
 
   // Messages
@@ -935,21 +1184,34 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
       let patchedVolunteers = prev.volunteers;
 
       if (v && nextStatus === "Confirmed") {
-        const nextInviteDateAfterConfirm = getNextInviteDateAfterConfirm(v, fridayISO);
+        // ✅ Cadence update:
+        // Confirmed now advances from the Friday being worked.
+        const nextInviteDateAfterResponse = getNextInviteDateAfterActivity(v, fridayISO);
+
         patchedVolunteers = (patchedVolunteers || []).map((vv) =>
           vv.id === volunteerId
             ? {
                 ...vv,
                 lastConfirmedDate: fridayISO,
-                nextInviteDate: nextInviteDateAfterConfirm || vv.nextInviteDate || "",
+                nextInviteDate: nextInviteDateAfterResponse || vv.nextInviteDate || "",
               }
             : vv
         );
       }
 
       if (v && (nextStatus === "Declined" || nextStatus === "No Response")) {
+        // ✅ Cadence update:
+        // No / No Response now advance by the volunteer's cadence from the Friday being worked.
+        const nextInviteDateAfterResponse = getNextInviteDateAfterActivity(v, fridayISO);
+
         patchedVolunteers = (patchedVolunteers || []).map((vv) =>
-          vv.id === volunteerId ? { ...vv, lastDeclinedDate: fridayISO } : vv
+          vv.id === volunteerId
+            ? {
+                ...vv,
+                lastDeclinedDate: fridayISO,
+                nextInviteDate: nextInviteDateAfterResponse || vv.nextInviteDate || "",
+              }
+            : vv
         );
       }
 
@@ -1046,8 +1308,27 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     if (!week) return;
     if (confirmedCount < minConfirmed) return;
 
+    const nextFridayISO = getNextInviteDateAfterNotInvited(fridayISO);
+    const notInvitedVolunteerIds = new Set(
+      (week.invites || [])
+        .filter((inv) => inv.status === "Not Invited")
+        .map((inv) => inv.volunteerId)
+    );
+
     setAppState((prev) => ({
       ...prev,
+
+      // ✅ Cadence update:
+      // Anyone still Not Invited when the week is finalized gets moved to next Friday.
+      volunteers: (prev.volunteers || []).map((v) =>
+        notInvitedVolunteerIds.has(v.id)
+          ? {
+              ...v,
+              nextInviteDate: nextFridayISO || v.nextInviteDate || "",
+            }
+          : v
+      ),
+
       weeks: prev.weeks.map((w) => (w.id === week.id ? { ...w, finalized: true } : w)),
     }));
   }

@@ -18,13 +18,14 @@
 // ✅ No changes to cadence options, monthly pattern behavior, or validation rules
 
 import React, { useEffect, useMemo, useState } from "react";
+import { getUpcomingFridayISO } from "../utils/date.js";
 
 // ✅ Scheduling System V2 helpers
 import {
   INVITE_CADENCES,
   MONTHLY_PATTERN_OPTIONS,
   getNextInviteDateISO,
-  getNextInviteDateAfterConfirm,
+  getNextInviteDateFromLastResponseOrInvite,
   isVolunteerDueThisWeek,
 } from "../utils/rotationV2.js";
 
@@ -95,17 +96,33 @@ function formatDateFriendly(isoOrTs) {
 
 /**
  * ✅ Scheduling System V2 “computed next invite”
- * If nextInviteDate is missing, we can still *suggest* one from lastConfirmedDate + cadence.
+ * If nextInviteDate is missing, we can still *suggest* one from:
+ * - last response
+ * - last invite
+ * - or the June 26, 2026 fallback anchor inside rotationV2.js
+ *
  * This does NOT change the schedule by itself — it only helps the coordinator backfill.
  */
 function getSuggestedNextInviteDate(v) {
   const scheduled = getNextInviteDateISO(v);
   if (scheduled) return null;
 
-  const lastConfirmed = v?.lastConfirmedDate;
-  if (!lastConfirmed) return null;
+  return getNextInviteDateFromLastResponseOrInvite(v);
+}
 
-  return getNextInviteDateAfterConfirm(v, lastConfirmed);
+/**
+ * ✅ Recalculate next invite date when cadence/pattern changes.
+ * This uses the volunteer's last response/invite date first,
+ * and falls back to June 26, 2026 through rotationV2.js.
+ */
+function getRecalculatedNextInviteForVolunteer(v, inviteCadence, monthlyPattern) {
+  return (
+    getNextInviteDateFromLastResponseOrInvite({
+      ...v,
+      inviteCadence: inviteCadence || "monthly",
+      monthlyPattern: inviteCadence === "monthly_pattern" ? monthlyPattern || "" : "",
+    }) || ""
+  );
 }
 
 // =========================
@@ -154,6 +171,8 @@ function MagnifyingGlassIcon({ size = 16 }) {
 }
 
 export default function VolunteersPageV2({ appState, setAppState }) {
+  const fridayISO = getUpcomingFridayISO();
+
   // Form state
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
@@ -191,11 +210,18 @@ export default function VolunteersPageV2({ appState, setAppState }) {
     active: true,
     createdAt: null,
     notes: "", // ✅ NEW
+
+    // ✅ Track originals so cadence changes can recalculate nextInviteDate without overwriting manual edits.
+    originalInviteCadence: "monthly",
+    originalMonthlyPattern: "",
+    originalNextInviteDate: "",
   });
 
   function openEditModal(v) {
     const scheduled = getNextInviteDateISO(v) || "";
     const suggested = getSuggestedNextInviteDate(v) || "";
+    const currentCadence = getCadence(v);
+    const currentPattern = currentCadence === "monthly_pattern" ? getMonthlyPattern(v) : "";
 
     setEditModal({
       open: true,
@@ -203,13 +229,17 @@ export default function VolunteersPageV2({ appState, setAppState }) {
       name: v.name || "",
       phone: v.phone || "",
       coreRole: getRole(v),
-      inviteCadence: getCadence(v),
+      inviteCadence: currentCadence,
       nextInviteDate: scheduled || suggested || "",
-      monthlyPattern: getCadence(v) === "monthly_pattern" ? getMonthlyPattern(v) : "",
+      monthlyPattern: currentPattern,
       firstTime: !!v.firstTime,
       active: !!v.active,
       createdAt: v.createdAt || null,
       notes: v.notes || "",
+
+      originalInviteCadence: currentCadence,
+      originalMonthlyPattern: currentPattern,
+      originalNextInviteDate: scheduled || suggested || "",
     });
   }
 
@@ -227,6 +257,10 @@ export default function VolunteersPageV2({ appState, setAppState }) {
       active: true,
       createdAt: null,
       notes: "",
+
+      originalInviteCadence: "monthly",
+      originalMonthlyPattern: "",
+      originalNextInviteDate: "",
     });
   }
 
@@ -237,11 +271,38 @@ export default function VolunteersPageV2({ appState, setAppState }) {
     if (!trimmedName) return alert("Please enter a name.");
     if (!trimmedPhone) return alert("Please enter a phone number.");
 
+    const nextMonthlyPattern =
+      editModal.inviteCadence === "monthly_pattern" ? editModal.monthlyPattern || "" : "";
+
+    const originalPattern =
+      editModal.originalInviteCadence === "monthly_pattern" ? editModal.originalMonthlyPattern || "" : "";
+
+    const cadenceChanged =
+      editModal.inviteCadence !== editModal.originalInviteCadence ||
+      nextMonthlyPattern !== originalPattern;
+
+    const currentVolunteer = volunteers.find((v) => v.id === editModal.volunteerId) || null;
+
+    const shouldAutoRecalculateNextInvite =
+      cadenceChanged &&
+      currentVolunteer &&
+      (!editModal.nextInviteDate || editModal.nextInviteDate === editModal.originalNextInviteDate);
+
+    const recalculatedNextInviteDate = shouldAutoRecalculateNextInvite
+      ? getRecalculatedNextInviteForVolunteer(
+          currentVolunteer,
+          editModal.inviteCadence,
+          nextMonthlyPattern
+        )
+      : "";
+
+    const finalNextInviteDate = recalculatedNextInviteDate || editModal.nextInviteDate || "";
+
     if (
       !validateSchedulingFields({
         inviteCadence: editModal.inviteCadence,
-        nextInviteDate: editModal.nextInviteDate,
-        monthlyPattern: editModal.monthlyPattern,
+        nextInviteDate: finalNextInviteDate,
+        monthlyPattern: nextMonthlyPattern,
       })
     ) {
       return;
@@ -259,9 +320,8 @@ export default function VolunteersPageV2({ appState, setAppState }) {
               phone: formattedPhone,
               coreRole: editModal.coreRole,
               inviteCadence: editModal.inviteCadence,
-              nextInviteDate: editModal.nextInviteDate || "",
-              monthlyPattern:
-                editModal.inviteCadence === "monthly_pattern" ? editModal.monthlyPattern || "" : "",
+              nextInviteDate: finalNextInviteDate,
+              monthlyPattern: nextMonthlyPattern,
               firstTime: !!editModal.firstTime,
               active: !!editModal.active,
               notes: String(editModal.notes || "").trim(), // ✅ NEW
@@ -378,15 +438,25 @@ export default function VolunteersPageV2({ appState, setAppState }) {
   function updateVolunteerCadence(volunteerId, inviteCadence) {
     setAppState((prev) => ({
       ...prev,
-      volunteers: prev.volunteers.map((v) =>
-        v.id === volunteerId
-          ? {
-              ...v,
-              inviteCadence,
-              monthlyPattern: inviteCadence === "monthly_pattern" ? v.monthlyPattern || "" : "",
-            }
-          : v
-      ),
+      volunteers: prev.volunteers.map((v) => {
+        if (v.id !== volunteerId) return v;
+
+        const nextMonthlyPattern =
+          inviteCadence === "monthly_pattern" ? v.monthlyPattern || "" : "";
+
+        const recalculatedNextInviteDate = getRecalculatedNextInviteForVolunteer(
+          v,
+          inviteCadence,
+          nextMonthlyPattern
+        );
+
+        return {
+          ...v,
+          inviteCadence,
+          monthlyPattern: nextMonthlyPattern,
+          nextInviteDate: recalculatedNextInviteDate || v.nextInviteDate || "",
+        };
+      }),
     }));
   }
 
@@ -400,7 +470,22 @@ export default function VolunteersPageV2({ appState, setAppState }) {
   function updateVolunteerMonthlyPattern(volunteerId, nextMonthlyPattern) {
     setAppState((prev) => ({
       ...prev,
-      volunteers: prev.volunteers.map((v) => (v.id === volunteerId ? { ...v, monthlyPattern: nextMonthlyPattern || "" } : v)),
+      volunteers: prev.volunteers.map((v) => {
+        if (v.id !== volunteerId) return v;
+
+        const pattern = nextMonthlyPattern || "";
+        const recalculatedNextInviteDate = getRecalculatedNextInviteForVolunteer(
+          v,
+          getCadence(v),
+          pattern
+        );
+
+        return {
+          ...v,
+          monthlyPattern: pattern,
+          nextInviteDate: recalculatedNextInviteDate || v.nextInviteDate || "",
+        };
+      }),
     }));
   }
 
@@ -628,9 +713,10 @@ export default function VolunteersPageV2({ appState, setAppState }) {
                 const scheduledNext = getNextInviteDateISO(v);
                 const suggestedNext = getSuggestedNextInviteDate(v);
 
-                // NOTE: This "Due" check is UI-only. Your Coordinator uses FridayISO logic.
+                // NOTE: This "Due" check is UI-only.
+                // It now matches the Coordinator page by using the upcoming Friday.
                 const dueNow = scheduledNext
-                  ? isVolunteerDueThisWeek(v, new Date().toISOString().slice(0, 10))
+                  ? isVolunteerDueThisWeek(v, fridayISO)
                   : false;
 
                 const phoneFmt = formatPhoneUS(v.phone);
@@ -716,7 +802,7 @@ export default function VolunteersPageV2({ appState, setAppState }) {
                               onClick={() => applySuggestedNextInviteDate(v.id)}
                               style={{ ...styles.smallBtn, marginTop: 8 }}
                               disabled={!suggestedNext}
-                              title={!suggestedNext ? "Need a last confirmed date to suggest a schedule." : "Set schedule"}
+                              title={!suggestedNext ? "Need response, invite history, or fallback anchor to suggest a schedule." : "Set schedule"}
                             >
                               Set Suggested Date
                             </button>
