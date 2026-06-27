@@ -1,42 +1,4 @@
 // app/src/pages/DashboardPage.jsx
-// Gateway to Service — Dashboard (with visuals + trends)
-//
-// PURPOSE
-// - At-a-glance view for the coordinator
-// - Adds lightweight, dependency-free visuals (SVG + bars)
-// - Shows last-N weeks trends using existing appState.weeks
-//
-// IMPORTANT
-// - READ-ONLY: does NOT mutate appState
-// - Safe against missing fields (older weeks/volunteers)
-// - Uses same Gateway Calm theme tokens as other pages
-
-
-
-/**
- * DashboardPage.jsx
- * ---------------------------------------------------------
- * This dashboard is READ-ONLY (no state mutations).
- *
- * What this file does:
- * 1) Snapshot of upcoming Friday week (if it exists).
- * 2) Trend (last 8 Fridays) ✅ now shown in a split layout:
- *    - Left: Team trend (Confirmed vs Drops)
- *    - Right: Per-volunteer trend chart (top volunteers) with hover labels
- * 3) Reminder Completion (already in the snapshot + visual)
- * 4) Reliability window (4/8/12) ✅ now uses horizontal stacked bars for Top Reliability,
- *    with hover showing counts + percentages.
- * 5) Needs Attention ✅ intentionally left EXACTLY the same list UI as before
- *    (same ordering + same pill display) to avoid changing what already works.
- *
- * Important note about "List Sent" tracking (Copy List for Chair):
- * - This dashboard only READS whatever the app stores.
- * - If your Coordinator page does not store a field like `week.chairListCopies`,
- *   `week.chairListCopiedAt`, or similar, the dashboard will show "Not tracked yet".
- * - This is Mode B: display the status if present, otherwise show a reminder message.
- */
-
-// app/src/pages/DashboardPage.jsx
 import React, { useMemo, useState } from "react";
 import { getUpcomingFridayISO, formatFriendlyDate } from "../utils/date.js";
 
@@ -85,7 +47,15 @@ const CORE_ROLE_ORDER = [
   "Meeting Steward",
   "Discussion Group Lead",
   "Big Book Lead",
+  "Gateway Employee",
 ];
+
+const ALT_ROLE_MAP = {
+  Chairperson: "Alt Chairperson",
+  "Discussion Group Lead": "Alt Discussion Lead",
+  "Big Book Lead": "Alt Big Book Lead",
+  "Gateway Employee": "Alt Gateway Employee",
+};
 
 // =========================
 // Basic helpers
@@ -218,14 +188,178 @@ function remindersSentCount(invites = []) {
   return { confirmedTotal: confirmed.length, remindersSent: sent };
 }
 
-/**
- * Chair list copy tracking
- * Supports a few possible week shapes so the dashboard doesn't break
- * if tracking is stored slightly differently.
- */
-function readChairListStats(week) {
-  if (!week) return { supported: false, copies: 0, lastAt: null, log: [] };
 
+/**
+ * List Sent tracking
+ * Reads the new Coordinator V2 shape:
+ * week.listSent = {
+ *   complete,
+ *   completionPercentage,
+ *   expectedRecipients,
+ *   recipients / sentRecipients,
+ *   sentAt,
+ *   updatedAt
+ * }
+ *
+ * Also supports older chair-list copy shapes so old weeks do not break.
+ */
+function getInviteStatusForVolunteer(v, inviteByVolunteerId) {
+  if (!v?.id) return null;
+  const inv = inviteByVolunteerId?.get(v.id) || null;
+  return inv?.status || null;
+}
+
+function buildListRecipientRecord(role, volunteer, status, messageGroup = "service", coveringFor = null) {
+  if (!volunteer) return null;
+  return {
+    volunteerId: volunteer.id || null,
+    name: volunteer.name || "",
+    role,
+    phone: formatPhoneUS(volunteer.phone || ""),
+    phoneRaw: volunteer.phone || "",
+    status: status || null,
+    coveringFor,
+    messageGroup,
+  };
+}
+
+function getConfirmedRoleRecipientRecord(role, { altRole = null, messageGroup = "service" } = {}, volunteersByRole, inviteByVolunteerId) {
+  const primary = volunteersByRole?.get(role) || null;
+  const primaryStatus = getInviteStatusForVolunteer(primary, inviteByVolunteerId);
+
+  if (primary?.phone && primaryStatus === "Confirmed") {
+    return buildListRecipientRecord(role, primary, primaryStatus, messageGroup);
+  }
+
+  const shouldUseAlt = primaryStatus === "Declined" || primaryStatus === "No Response";
+  if (shouldUseAlt && altRole) {
+    const alt = volunteersByRole?.get(altRole) || null;
+    const altStatus = getInviteStatusForVolunteer(alt, inviteByVolunteerId);
+
+    if (alt?.phone && altStatus === "Confirmed") {
+      return buildListRecipientRecord(altRole, alt, altStatus, messageGroup, role);
+    }
+  }
+
+  return null;
+}
+
+function listRecipientKey(rec) {
+  const id = rec?.volunteerId || "";
+  const role = rec?.role || "";
+  const phone = normalizePhoneForComparison(rec?.phoneRaw || rec?.phone || "");
+  return `${id || phone}__${role}`;
+}
+
+function normalizePhoneForComparison(phone) {
+  return String(phone || "").replace(/[^\d+]/g, "");
+}
+
+function buildExpectedListRecipients(volunteersByRole, inviteByVolunteerId) {
+  const raw = [
+    getConfirmedRoleRecipientRecord(
+      "Gateway Employee",
+      { altRole: ALT_ROLE_MAP["Gateway Employee"], messageGroup: "gateway" },
+      volunteersByRole,
+      inviteByVolunteerId
+    ),
+    getConfirmedRoleRecipientRecord("Meeting Steward", { messageGroup: "service" }, volunteersByRole, inviteByVolunteerId),
+    getConfirmedRoleRecipientRecord(
+      "Chairperson",
+      { altRole: ALT_ROLE_MAP.Chairperson, messageGroup: "service" },
+      volunteersByRole,
+      inviteByVolunteerId
+    ),
+    getConfirmedRoleRecipientRecord("List Coordinator", { messageGroup: "service" }, volunteersByRole, inviteByVolunteerId),
+  ].filter(Boolean);
+
+  const seen = new Set();
+  const out = [];
+
+  for (const rec of raw) {
+    const key = String(rec.volunteerId || normalizePhoneForComparison(rec.phoneRaw || rec.phone) || rec.name || rec.role);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(rec);
+  }
+
+  return out;
+}
+
+function normalizeListRecipientRecord(rec, fallbackSentAt = null) {
+  return {
+    volunteerId: rec?.volunteerId || null,
+    name: rec?.name || "",
+    role: rec?.role || "",
+    phone: formatPhoneUS(rec?.phone || rec?.phoneRaw || ""),
+    phoneRaw: rec?.phoneRaw || rec?.phone || "",
+    status: rec?.status || null,
+    coveringFor: rec?.coveringFor || null,
+    messageGroup: rec?.messageGroup || "service",
+    sentAt: rec?.sentAt || fallbackSentAt || null,
+  };
+}
+
+function readListSentStats(week, expectedRecipients = []) {
+  if (!week) {
+    return {
+      supported: false,
+      complete: false,
+      completionPercentage: 0,
+      sentCount: 0,
+      totalCount: 0,
+      lastAt: null,
+      expectedRecipients: [],
+      sentRecipients: [],
+      remainingRecipients: [],
+    };
+  }
+
+  const listSent = week.listSent || null;
+
+  if (listSent) {
+    const expected =
+      Array.isArray(listSent.expectedRecipients) && listSent.expectedRecipients.length
+        ? listSent.expectedRecipients.map((rec) => normalizeListRecipientRecord(rec))
+        : expectedRecipients.map((rec) => normalizeListRecipientRecord(rec));
+
+    const sentRaw = Array.isArray(listSent.recipients)
+      ? listSent.recipients
+      : Array.isArray(listSent.sentRecipients)
+      ? listSent.sentRecipients
+      : [];
+
+    const sentRecipients = sentRaw.map((rec) => normalizeListRecipientRecord(rec, listSent.sentAt || listSent.updatedAt || null));
+
+    const sentKeys = new Set(sentRecipients.map(listRecipientKey));
+    const expectedKeys = expected.map(listRecipientKey);
+    const sentCount = expectedKeys.filter((key) => sentKeys.has(key)).length;
+    const totalCount = expected.length;
+    const calculatedPct = totalCount > 0 ? Math.round((sentCount / totalCount) * 100) : 0;
+    const completionPercentage =
+      typeof listSent.completionPercentage === "number" ? listSent.completionPercentage : calculatedPct;
+
+    const remainingRecipients = expected.filter((rec) => !sentKeys.has(listRecipientKey(rec)));
+    const lastFromSent = sentRecipients
+      .map((rec) => rec.sentAt)
+      .filter(Boolean)
+      .sort((a, b) => String(a).localeCompare(String(b)))
+      .pop();
+
+    return {
+      supported: true,
+      complete: !!listSent.complete || (totalCount > 0 && sentCount >= totalCount),
+      completionPercentage,
+      sentCount,
+      totalCount,
+      lastAt: listSent.sentAt || listSent.updatedAt || lastFromSent || null,
+      expectedRecipients: expected,
+      sentRecipients,
+      remainingRecipients,
+    };
+  }
+
+  // Backward compatibility with older chair-list copy tracking.
   const nested = week.chairList || null;
   const copiedAt = (nested && nested.copiedAt) || week.chairListCopiedAt || null;
 
@@ -240,18 +374,45 @@ function readChairListStats(week) {
     [];
 
   const supported = !!copiedAt || copies !== null || (Array.isArray(log) && log.length > 0);
-
   const lastAtFromLog =
     Array.isArray(log) && log.length
       ? (log[log.length - 1]?.at || log[log.length - 1]?.copiedAt || null)
       : null;
 
+  const complete = !!(copiedAt || lastAtFromLog || (copies || 0) > 0);
+
   return {
     supported,
-    copies: copies ?? (Array.isArray(log) ? log.length : 0),
+    complete,
+    completionPercentage: complete ? 100 : 0,
+    sentCount: complete ? expectedRecipients.length : 0,
+    totalCount: expectedRecipients.length,
     lastAt: copiedAt || lastAtFromLog || null,
-    log: Array.isArray(log) ? log : [],
+    expectedRecipients: expectedRecipients.map((rec) => normalizeListRecipientRecord(rec)),
+    sentRecipients: [],
+    remainingRecipients: complete ? [] : expectedRecipients.map((rec) => normalizeListRecipientRecord(rec)),
   };
+}
+
+function getCentralTodayISOAndWeekday(now = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Chicago",
+    weekday: "short",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(now);
+
+  const get = (type) => parts.find((p) => p.type === type)?.value || "";
+  return {
+    iso: `${get("year")}-${get("month")}-${get("day")}`,
+    weekday: get("weekday"),
+  };
+}
+
+function isCurrentFridayForWeek(fridayISO, now = new Date()) {
+  const cur = getCentralTodayISOAndWeekday(now);
+  return cur.weekday === "Fri" && cur.iso === fridayISO;
 }
 
 // =========================
@@ -776,6 +937,11 @@ export default function DashboardPage({ appState }) {
     return m;
   }, [invites]);
 
+  const expectedListRecipients = useMemo(() => {
+    if (!week) return [];
+    return buildExpectedListRecipients(volunteersByRole, inviteByVolunteerId);
+  }, [week, volunteersByRole, inviteByVolunteerId]);
+
   const counts = useMemo(() => countInviteStatuses(invites), [invites]);
   const reminderStats = useMemo(() => remindersSentCount(invites), [invites]);
 
@@ -790,14 +956,28 @@ export default function DashboardPage({ appState }) {
 
   const coverage = useMemo(() => {
     return CORE_ROLE_ORDER.map((role) => {
-      const v = volunteersByRole.get(role) || null;
-      const inv = v ? inviteByVolunteerId.get(v.id) || null : null;
+      const primary = volunteersByRole.get(role) || null;
+      const primaryInv = primary ? inviteByVolunteerId.get(primary.id) || null : null;
+      const primaryStatus = primaryInv?.status || (primary ? "Not on list" : "Unassigned");
+
+      const altRole = ALT_ROLE_MAP[role] || null;
+      const primaryNeedsAlt = primaryStatus === "Declined" || primaryStatus === "No Response";
+      const alt = primaryNeedsAlt && altRole ? volunteersByRole.get(altRole) || null : null;
+      const altInv = alt ? inviteByVolunteerId.get(alt.id) || null : null;
+      const altStatus = altInv?.status || (alt ? "Not on list" : null);
+      const altIsCovering = !!alt && altStatus === "Confirmed";
+
+      const person = altIsCovering ? alt : primary;
 
       return {
         role,
-        person: v,
-        status: inv?.status || (v ? "Not on list" : "Unassigned"),
-        paused: v ? !v.active : false,
+        person,
+        primaryPerson: primary,
+        primaryStatus,
+        status: altIsCovering ? "Confirmed" : primaryStatus,
+        paused: person ? !person.active : false,
+        coveredByAlt: altIsCovering,
+        coveredByRole: altIsCovering ? altRole : null,
       };
     });
   }, [volunteersByRole, inviteByVolunteerId]);
@@ -1069,11 +1249,17 @@ export default function DashboardPage({ appState }) {
     return { text: "Not assigned", kind: "warn" };
   }, [week?.finalized, firstStepLead, volunteersById]);
 
-  const chairListStats = useMemo(() => readChairListStats(week), [week]);
+  const chairListStats = useMemo(() => readListSentStats(week, expectedListRecipients), [week, expectedListRecipients]);
   const chairListPct = useMemo(() => {
     if (!week) return 0;
-    return chairListStats?.lastAt ? 1 : 0;
+    return Math.max(0, Math.min(1, (chairListStats?.completionPercentage || 0) / 100));
   }, [week, chairListStats]);
+
+  const listSentFridayWarning = useMemo(() => {
+    if (!week) return false;
+    if (chairListStats?.complete) return false;
+    return isCurrentFridayForWeek(fridayISO);
+  }, [week, chairListStats, fridayISO]);
 
   const checkInTemplate =
     appState?.settings?.messages?.checkIn ||
@@ -1314,6 +1500,7 @@ export default function DashboardPage({ appState }) {
                   <div style={{ fontWeight: 900, color: THEME.navy }}>{row.role}</div>
                   <div style={{ fontSize: 12, color: THEME.muted, marginTop: 2 }}>
                     {v ? `${v.name} • ${formatPhoneUS(v.phone) || v.phone} • ${getRole(v)}` : "No one assigned"}
+                    {row.coveredByAlt ? ` • Covered by ${row.coveredByRole}` : ""}
                     {v && !v.active ? " • (Paused)" : ""}
                   </div>
                 </div>
@@ -1498,29 +1685,79 @@ export default function DashboardPage({ appState }) {
             <div style={miniHint}>Week exists: {week ? "Yes" : "No"}</div>
           </div>
 
-          <div style={miniStat}>
-            <div style={miniLabel}>List Sent (Chair Copy)</div>
-            <div style={miniValue}>{chairListPct >= 1 ? "Sent ✅" : "Not Sent"}</div>
+          <div style={{ ...miniStat, ...(listSentFridayWarning ? listSentUrgentStat : null) }}>
+            <div style={{ ...miniLabel, color: listSentFridayWarning ? THEME.red : miniLabel.color }}>
+              List Sent (Chair Copy)
+            </div>
+            <div style={{ ...miniValue, color: listSentFridayWarning ? THEME.red : miniValue.color }}>
+              {chairListStats.complete ? "Sent ✅" : listSentFridayWarning ? "NOT SENT ❗" : "Not Sent"}
+            </div>
 
             {!week ? (
               <div style={miniHint}>Create the week list first.</div>
             ) : chairListStats.supported ? (
-              <div style={miniHint}>
-                Copies: {chairListStats.copies} • Last: {fmtTime(chairListStats.lastAt)}
+              <div style={{ ...miniHint, color: listSentFridayWarning ? THEME.red : miniHint.color }}>
+                Progress: {chairListStats.sentCount} / {chairListStats.totalCount} • Last: {fmtTime(chairListStats.lastAt)}
               </div>
             ) : (
-              <div style={miniHint}>
-                Not tracked yet. If you want this tracked, store a timestamp on the week when “Copy List for Chair” is clicked.
+              <div style={{ ...miniHint, color: listSentFridayWarning ? THEME.red : miniHint.color }}>
+                Not sent yet. Use <b>Copy List for Chair</b>, then <b>Send List</b> on the Coordinator page.
               </div>
             )}
 
             <div style={{ marginTop: 10 }}>
-              <MiniBar value={chairListPct} max={1} labelLeft="Completion" labelRight={`${Math.round(chairListPct * 100)}%`} />
+              <MiniBar
+                value={chairListStats.completionPercentage || 0}
+                max={100}
+                labelLeft="Completion"
+                labelRight={`${Math.round(chairListStats.completionPercentage || 0)}%`}
+              />
             </div>
 
-            {week ? (
-              <div style={{ marginTop: 10, fontSize: 12, color: THEME.muted, lineHeight: 1.35 }}>
-                If not sent yet, this section is your reminder to send to: <b>Jason</b>, <b>Meeting Steward</b>, and <b>Chairperson</b>.
+            {week && chairListStats.sentRecipients.length > 0 ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ ...listSubheading, color: listSentFridayWarning ? THEME.red : THEME.navy }}>Sent to</div>
+                <div style={listRecipientList}>
+                  {chairListStats.sentRecipients.map((rec) => (
+                    <div key={`sent-${listRecipientKey(rec)}`} style={listRecipientRow}>
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ fontWeight: 900, color: THEME.navy }}>{rec.name || "Unknown"}</div>
+                        <div style={{ fontSize: 12, color: THEME.muted, marginTop: 2 }}>
+                          {rec.role || "—"}{rec.coveringFor ? ` covering ${rec.coveringFor}` : ""} • {formatPhoneUS(rec.phone) || rec.phone || "—"}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : null}
+
+            {week && !chairListStats.complete ? (
+              <div style={{ marginTop: 12 }}>
+                <div style={{ ...listSubheading, color: listSentFridayWarning ? THEME.red : THEME.navy }}>
+                  {listSentFridayWarning ? "Needs to be sent today" : "Reminder: send to"}
+                </div>
+
+                {chairListStats.remainingRecipients.length > 0 ? (
+                  <div style={listRecipientList}>
+                    {chairListStats.remainingRecipients.map((rec) => (
+                      <div key={`remaining-${listRecipientKey(rec)}`} style={listRecipientRow}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 900, color: listSentFridayWarning ? THEME.red : THEME.navy }}>
+                            {rec.name || "Unknown"}
+                          </div>
+                          <div style={{ fontSize: 12, color: listSentFridayWarning ? THEME.red : THEME.muted, marginTop: 2 }}>
+                            {rec.role || "—"}{rec.coveringFor ? ` covering ${rec.coveringFor}` : ""} • {formatPhoneUS(rec.phone) || rec.phone || "—"}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ ...miniHint, color: listSentFridayWarning ? THEME.red : miniHint.color }}>
+                    No confirmed send-list recipients are available yet. Confirm the Gateway Employee, Meeting Steward, Chairperson/Alt, and List Coordinator first.
+                  </div>
+                )}
               </div>
             ) : null}
           </div>
@@ -1568,6 +1805,30 @@ const miniHint = {
   fontSize: 12,
   color: THEME.muted,
   lineHeight: 1.35,
+};
+
+const listSentUrgentStat = {
+  border: "1px solid rgba(185,28,28,0.45)",
+  background: "rgba(185,28,28,0.08)",
+};
+
+const listSubheading = {
+  fontSize: 12,
+  fontWeight: 950,
+  color: THEME.navy,
+  marginBottom: 8,
+};
+
+const listRecipientList = {
+  display: "grid",
+  gap: 8,
+};
+
+const listRecipientRow = {
+  border: "1px solid rgba(36,52,71,0.10)",
+  borderRadius: 10,
+  padding: 8,
+  background: "#fff",
 };
 
 const rowLine = {

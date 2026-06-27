@@ -103,6 +103,7 @@ const CORE_ROLE_ORDER = [
   "Meeting Steward",
   "Discussion Group Lead",
   "Big Book Lead",
+  "Gateway Employee"
 ];
 
 const STATUS_ORDER = ["Not Invited", "Invited", "Confirmed", "Declined", "No Response"];
@@ -125,6 +126,8 @@ const ROLE_SORT_PRIORITY = [
   "Big Book Lead",
   "Alt Big Book Lead",
   "Volunteer",
+  "Gateway Employee",
+  "Alt Gateway Employee",
 ];
 
 function roleRank(role) {
@@ -132,11 +135,12 @@ function roleRank(role) {
   return idx === -1 ? 999 : idx;
 }
 
-// ✅ The 3 required roles that have Alt coverage swaps
+// ✅ Required roles that have Alt coverage swaps
 const ALT_ROLE_MAP = {
   Chairperson: "Alt Chairperson",
   "Discussion Group Lead": "Alt Discussion Lead",
   "Big Book Lead": "Alt Big Book Lead",
+  "Gateway Employee": "Alt Gateway Employee",
 };
 
 // ----- Date helpers -----
@@ -409,6 +413,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   const [toast, setToast] = useState("");
   const [showLastMinute, setShowLastMinute] = useState(false);
   const [hoveredBtn, setHoveredBtn] = useState(null);
+  const [listCopiedForChair, setListCopiedForChair] = useState(false);
 
   const [activeFilter, setActiveFilter] = useState("all");
   const [hoveredChip, setHoveredChip] = useState(null);
@@ -433,6 +438,19 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     name: "",
     message: "",
   });
+
+  const [listSendModal, setListSendModal] = useState({
+    open: false,
+    entries: [],
+    gatewayEntries: [],
+    serviceEntries: [],
+    gatewayMessage: "",
+    serviceMessage: "",
+  });
+
+  useEffect(() => {
+    setListCopiedForChair(false);
+  }, [week?.id]);
 
   // ✅ Automatic one-time roster-wide cadence repair.
   //
@@ -587,7 +605,8 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
 
   // Lock scroll when any modal is open
   useEffect(() => {
-    const anyModalOpen = showLastMinute || smsModal.open || editStatus.open || altPromptOpen;
+    const anyModalOpen =
+      showLastMinute || smsModal.open || listSendModal.open || editStatus.open || altPromptOpen;
     if (!anyModalOpen) return;
 
     const prev = document.body.style.overflow;
@@ -595,7 +614,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [showLastMinute, smsModal.open, editStatus.open, altPromptOpen]);
+  }, [showLastMinute, smsModal.open, listSendModal.open, editStatus.open, altPromptOpen]);
 
   // Lookups
   const volunteersById = useMemo(() => {
@@ -632,12 +651,23 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   }, [week, appState.volunteers, volunteersByRole, inviteByVolunteerId]);
 
   // ✅ Coverage swaps map (UI-only)
+  // Alt roles should ONLY replace the primary required role when the primary
+  // person has declined or has no response. If the primary person is still
+  // attending, the Alt can remain on the list as a regular confirmed volunteer
+  // without being shown as the role substitute.
   const coverageSwapByRequiredRole = useMemo(() => {
     if (!week) return new Map();
 
-    const m = new Map(); // requiredRole -> { coveredByVolunteer, coveredByRole, altStatus }
+    const m = new Map(); // requiredRole -> { coveredByVolunteer, coveredByRole, altStatus, primaryStatus }
     for (const requiredRole of Object.keys(ALT_ROLE_MAP)) {
       const altRole = ALT_ROLE_MAP[requiredRole];
+
+      const primaryPerson = volunteersByRole.get(requiredRole) || null;
+      const primaryInvite = primaryPerson ? inviteByVolunteerId.get(primaryPerson.id) || null : null;
+      const primaryStatus = primaryInvite?.status || null;
+
+      const primaryNeedsReplacement = primaryStatus === "Declined" || primaryStatus === "No Response";
+      if (!primaryNeedsReplacement) continue;
 
       const altPerson = volunteersByRole.get(altRole) || null;
       if (!altPerson) continue;
@@ -650,6 +680,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
           coveredByVolunteer: altPerson,
           coveredByRole: altRole,
           altStatus,
+          primaryStatus,
         });
       }
     }
@@ -1010,6 +1041,16 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     return (template || "").replaceAll("[Name]", volunteerName || "");
   }
 
+  function fillListTemplate(template, entry, listText) {
+    const dateText = formatFriendlyDate(fridayISO);
+    const volunteerName = entry?.volunteer?.name || entry?.name || "";
+
+    return String(template || "")
+      .replaceAll("[Name]", volunteerName || "")
+      .replaceAll("[Date]", dateText || "")
+      .replaceAll("[List]", listText || "");
+  }
+
   async function copyText(text) {
     try {
       await navigator.clipboard.writeText(text);
@@ -1026,8 +1067,8 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
   // Requirement: each line => "Name — 234-567-8901"
   // We intentionally keep buildChairText call available (in case you rely on it elsewhere),
   // but for the *Copy button*, we output the explicit format you requested.
-  function handleCopyListForChair() {
-    if (!week) return;
+  function buildListTextForChair() {
+    if (!week) return "";
 
     // Preferred: when finalized, chair usually wants confirmed roster.
     // If not finalized yet, still copy the current Confirmed list (so chair isn't sent "Not Invited").
@@ -1049,14 +1090,280 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
       .map((v) => `${(v.name || "").trim()} — ${formatPhoneUS(v.phone) || (v.phone || "").trim()}`.trim());
 
     const header = `Gateway Volunteers — ${formatFriendlyDate(fridayISO)}`;
-    const text = [header, "", ...rows].join("\n");
+    return [header, "", ...rows].join("\n");
+  }
 
+  function handleCopyListForChair() {
+    if (!week) return;
+
+    const text = buildListTextForChair();
     copyText(text);
+    setListCopiedForChair(true);
 
     // NOTE: We did not delete buildChairText() import or logic;
     // it's still here if you decide to switch back later.
     // eslint-disable-next-line no-unused-vars
     const _unusedLegacy = buildChairText;
+  }
+
+  function getInviteStatusForVolunteer(volunteer) {
+    if (!volunteer?.id) return null;
+    const inv = inviteByVolunteerId.get(volunteer.id) || null;
+    return inv?.status || null;
+  }
+
+  function buildListRecipientEntry(role, volunteer, status, messageGroup, coveringFor = null) {
+    if (!volunteer?.phone) return null;
+
+    return {
+      volunteerId: volunteer.id,
+      volunteer,
+      name: volunteer.name || "",
+      role,
+      phone: volunteer.phone || "",
+      status: status || null,
+      coveringFor,
+      messageGroup,
+    };
+  }
+
+  function getConfirmedRoleRecipientEntry(role, options = {}) {
+    const { altRole = null, messageGroup = "service" } = options;
+
+    const primary = volunteersByRole.get(role) || null;
+    const primaryStatus = getInviteStatusForVolunteer(primary);
+
+    if (primary?.phone && primaryStatus === "Confirmed") {
+      return buildListRecipientEntry(role, primary, primaryStatus, messageGroup);
+    }
+
+    const shouldUseAlt = primaryStatus === "Declined" || primaryStatus === "No Response";
+    if (shouldUseAlt && altRole) {
+      const alt = volunteersByRole.get(altRole) || null;
+      const altStatus = getInviteStatusForVolunteer(alt);
+
+      if (alt?.phone && altStatus === "Confirmed") {
+        return buildListRecipientEntry(altRole, alt, altStatus, messageGroup, role);
+      }
+    }
+
+    return null;
+  }
+
+  function getListRecipientKey(entryOrRecord) {
+    const id = entryOrRecord?.volunteerId || "";
+    const role = entryOrRecord?.role || "";
+    const phone = normalizePhoneForSMS(entryOrRecord?.phoneRaw || entryOrRecord?.phone || "");
+    return `${id || phone}__${role}`;
+  }
+
+  function getListRecipientEntries() {
+    const rawEntries = [
+      getConfirmedRoleRecipientEntry("Gateway Employee", {
+        altRole: ALT_ROLE_MAP["Gateway Employee"],
+        messageGroup: "gateway",
+      }),
+      getConfirmedRoleRecipientEntry("Meeting Steward", {
+        messageGroup: "service",
+      }),
+      getConfirmedRoleRecipientEntry("Chairperson", {
+        altRole: ALT_ROLE_MAP.Chairperson,
+        messageGroup: "service",
+      }),
+      getConfirmedRoleRecipientEntry("List Coordinator", {
+        messageGroup: "service",
+      }),
+    ].filter(Boolean);
+
+    const seen = new Set();
+    const entries = [];
+
+    for (const entry of rawEntries) {
+      const key = String(entry.volunteerId || normalizePhoneForSMS(entry.phone) || entry.name || entry.role);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      entries.push(entry);
+    }
+
+    return entries;
+  }
+
+  function makeListRecipientRecord(entry, sentAt = null) {
+    return {
+      volunteerId: entry?.volunteerId || entry?.volunteer?.id || null,
+      name: entry?.name || entry?.volunteer?.name || "",
+      role: entry?.role || "",
+      phone: formatPhoneUS(entry?.phone || entry?.volunteer?.phone || ""),
+      phoneRaw: entry?.phone || entry?.volunteer?.phone || "",
+      status: entry?.status || null,
+      coveringFor: entry?.coveringFor || null,
+      messageGroup: entry?.messageGroup || "service",
+      sentAt,
+    };
+  }
+
+  function buildGatewayEmployeeListMessage(entry, listText) {
+    const template = appState?.settings?.messages?.gatewayEmployee || "";
+
+    if (!String(template || "").trim()) {
+      return listText || "";
+    }
+
+    const filled = fillListTemplate(template, entry, listText);
+
+    // If the saved Gateway Employee message includes [List], respect that exact placement.
+    // If it does not, append the list so the facility still receives the roster.
+    if (String(template).includes("[List]")) {
+      return filled;
+    }
+
+    return `${String(filled || "").trim()}\n\n${listText || ""}`.trim();
+  }
+
+  function buildSmsLinkForMultiple(phones, body) {
+    const to = (phones || []).map(normalizePhoneForSMS).filter(Boolean).join(",");
+    const encoded = encodeURIComponent(body || "");
+    const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    const sep = isIOS ? "&" : "?";
+    return `sms:${to}${sep}body=${encoded}`;
+  }
+
+  function closeListSendModal() {
+    setListSendModal({
+      open: false,
+      entries: [],
+      gatewayEntries: [],
+      serviceEntries: [],
+      gatewayMessage: "",
+      serviceMessage: "",
+    });
+  }
+
+  function recordListSentEntries(entriesToMark, allExpectedEntries) {
+    if (!week) return;
+
+    const nowISO = new Date().toISOString();
+    const expectedEntries = Array.isArray(allExpectedEntries) ? allExpectedEntries : [];
+    const markedEntries = Array.isArray(entriesToMark) ? entriesToMark : [];
+
+    setAppState((prev) =>
+      patchWeek(prev, week.id, (w) => {
+        const existing = w.listSent || {};
+        const oldSent = Array.isArray(existing.recipients)
+          ? existing.recipients
+          : Array.isArray(existing.sentRecipients)
+          ? existing.sentRecipients
+          : [];
+
+        const expectedRecipients = expectedEntries.map((entry) => makeListRecipientRecord(entry, null));
+
+        const sentByKey = new Map();
+        for (const rec of oldSent) {
+          sentByKey.set(getListRecipientKey(rec), rec);
+        }
+
+        for (const entry of markedEntries) {
+          const record = makeListRecipientRecord(entry, nowISO);
+          sentByKey.set(getListRecipientKey(record), record);
+        }
+
+        const sentRecipients = Array.from(sentByKey.values());
+        const expectedKeys = expectedRecipients.map((rec) => getListRecipientKey(rec));
+        const sentCount = expectedKeys.filter((key) => sentByKey.has(key)).length;
+        const totalCount = expectedRecipients.length;
+        const percentage = totalCount > 0 ? Math.round((sentCount / totalCount) * 100) : 0;
+        const complete = totalCount > 0 && sentCount >= totalCount;
+
+        return {
+          ...w,
+          listSent: {
+            ...existing,
+            updatedAt: nowISO,
+            sentAt: complete ? existing.sentAt || nowISO : existing.sentAt || null,
+            complete,
+            completionPercentage: percentage,
+            expectedRecipients,
+            recipients: sentRecipients,
+            sentRecipients,
+          },
+        };
+      })
+    );
+  }
+
+  function handleSendListForChair() {
+    if (!week) return;
+
+    const entries = getListRecipientEntries();
+    if (!entries.length) {
+      setToast("No confirmed list recipients found ❌");
+      setTimeout(() => setToast(""), 1500);
+      return;
+    }
+
+    const listText = buildListTextForChair();
+    const gatewayEntries = entries.filter((entry) => entry.messageGroup === "gateway");
+    const serviceEntries = entries.filter((entry) => entry.messageGroup !== "gateway");
+
+    setListSendModal({
+      open: true,
+      entries,
+      gatewayEntries,
+      serviceEntries,
+      gatewayMessage: gatewayEntries.length
+        ? buildGatewayEmployeeListMessage(gatewayEntries[0], listText)
+        : "",
+      serviceMessage: listText,
+    });
+  }
+
+  function handleOpenListTextGroup(group) {
+    const entries = group === "gateway" ? listSendModal.gatewayEntries : listSendModal.serviceEntries;
+    const message = group === "gateway" ? listSendModal.gatewayMessage : listSendModal.serviceMessage;
+
+    if (!entries.length) {
+      setToast("No recipients in that group ❌");
+      setTimeout(() => setToast(""), 1500);
+      return;
+    }
+
+    const phones = entries.map((entry) => entry.phone).filter(Boolean);
+    const link = buildSmsLinkForMultiple(phones, message);
+
+    recordListSentEntries(entries, listSendModal.entries);
+
+    setToast(`Opening ${group === "gateway" ? "Gateway Employee" : "service list"} text ✅`);
+    setTimeout(() => setToast(""), 1600);
+
+    setTimeout(() => {
+      window.location.href = link;
+    }, 0);
+  }
+
+  async function handleCopyListTextGroup(group) {
+    const entries = group === "gateway" ? listSendModal.gatewayEntries : listSendModal.serviceEntries;
+    const message = group === "gateway" ? listSendModal.gatewayMessage : listSendModal.serviceMessage;
+
+    if (!entries.length) {
+      setToast("No recipients in that group ❌");
+      setTimeout(() => setToast(""), 1500);
+      return;
+    }
+
+    await copyText(message);
+    recordListSentEntries(entries, listSendModal.entries);
+
+    setToast(`${group === "gateway" ? "Gateway Employee" : "Service list"} marked sent ✅`);
+    setTimeout(() => setToast(""), 1600);
+  }
+
+  function handleMarkAllListSent() {
+    if (!listSendModal.entries.length) return;
+
+    recordListSentEntries(listSendModal.entries, listSendModal.entries);
+    setToast("List marked sent ✅");
+    setTimeout(() => setToast(""), 1600);
+    closeListSendModal();
   }
 
   // SMS helpers
@@ -1132,7 +1439,17 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     }
 
     if (kind === "reminder") {
-      updateInvite(volunteerId, { reminderSentAt: nowISO });
+      // ✅ Keep finalized state when sending reminders.
+      // Reminder tracking should update reminderSentAt only.
+      // It should NOT reopen/unfinalize the week.
+      setAppState((prev) =>
+        patchWeek(prev, week.id, (w) => ({
+          ...w,
+          invites: (w.invites || []).map((inv) =>
+            inv.volunteerId === volunteerId ? { ...inv, reminderSentAt: nowISO } : inv
+          ),
+        }))
+      );
     }
 
     if (kind === "firstStepLead") {
@@ -1716,7 +2033,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
         {week ? (
           <button
             type="button"
-            onClick={handleCopyListForChair}
+            onClick={listCopiedForChair ? handleSendListForChair : handleCopyListForChair}
             style={baseButtonStyle({
               hovered: hoveredBtn === "primary:copyChair",
               disabled: false,
@@ -1725,7 +2042,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
             onMouseEnter={() => setHoveredBtn("primary:copyChair")}
             onMouseLeave={() => setHoveredBtn(null)}
           >
-            Copy List for Chair
+            {listCopiedForChair ? "Send List" : "Copy List for Chair"}
           </button>
         ) : null}
 
@@ -2324,6 +2641,149 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
                 </div>
               );
             })()}
+          </div>
+        </div>
+      ) : null}
+
+      {/* SEND LIST MODAL */}
+      {listSendModal.open ? (
+        <div style={styles.modalBackdrop} onClick={closeListSendModal}>
+          <div style={styles.modalCard} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.row}>
+              <div style={{ fontWeight: 1000, color: THEME.navy }}>Send List</div>
+
+              <button
+                type="button"
+                style={baseButtonStyle({ hovered: hoveredBtn === "small:closeListSend", disabled: false, variant: "small" })}
+                onMouseEnter={() => setHoveredBtn("small:closeListSend")}
+                onMouseLeave={() => setHoveredBtn(null)}
+                onClick={closeListSendModal}
+              >
+                Close
+              </button>
+            </div>
+
+            <div style={{ marginTop: 10, fontSize: 12, color: THEME.muted, lineHeight: 1.35 }}>
+              Gateway Employee receives the saved Gateway Employee message. Service roles receive the regular list text.
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
+              {listSendModal.gatewayEntries.length ? (
+                <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontWeight: 950, color: THEME.navy }}>Gateway Employee Message</div>
+
+                  <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                    {listSendModal.gatewayEntries.map((entry) => (
+                      <div key={getListRecipientKey(entry)} style={{ fontSize: 13, color: THEME.navy, lineHeight: 1.35 }}>
+                        <b>{entry.name}</b> — {entry.role}
+                        {entry.coveringFor ? ` covering ${entry.coveringFor}` : ""} — {formatPhoneUS(entry.phone) || entry.phone}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      borderRadius: 12,
+                      border: `1px solid ${THEME.border}`,
+                      background: THEME.bg,
+                      color: THEME.navy,
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.35,
+                      fontSize: 13,
+                    }}
+                  >
+                    {listSendModal.gatewayMessage}
+                  </div>
+
+                  <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                    <button
+                      type="button"
+                      style={baseButtonStyle({ hovered: hoveredBtn === "primary:listGatewayOpen", disabled: false, variant: "primary" })}
+                      onMouseEnter={() => setHoveredBtn("primary:listGatewayOpen")}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      onClick={() => handleOpenListTextGroup("gateway")}
+                    >
+                      Text Gateway Employee
+                    </button>
+
+                    <button
+                      type="button"
+                      style={baseButtonStyle({ hovered: hoveredBtn === "primary:listGatewayCopy", disabled: false, variant: "primary" })}
+                      onMouseEnter={() => setHoveredBtn("primary:listGatewayCopy")}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      onClick={() => handleCopyListTextGroup("gateway")}
+                    >
+                      Copy Gateway Message
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+
+              {listSendModal.serviceEntries.length ? (
+                <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 10 }}>
+                  <div style={{ fontWeight: 950, color: THEME.navy }}>Service List Recipients</div>
+
+                  <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                    {listSendModal.serviceEntries.map((entry) => (
+                      <div key={getListRecipientKey(entry)} style={{ fontSize: 13, color: THEME.navy, lineHeight: 1.35 }}>
+                        <b>{entry.name}</b> — {entry.role}
+                        {entry.coveringFor ? ` covering ${entry.coveringFor}` : ""} — {formatPhoneUS(entry.phone) || entry.phone}
+                      </div>
+                    ))}
+                  </div>
+
+                  <div
+                    style={{
+                      marginTop: 10,
+                      padding: 10,
+                      borderRadius: 12,
+                      border: `1px solid ${THEME.border}`,
+                      background: THEME.bg,
+                      color: THEME.navy,
+                      whiteSpace: "pre-wrap",
+                      lineHeight: 1.35,
+                      fontSize: 13,
+                    }}
+                  >
+                    {listSendModal.serviceMessage}
+                  </div>
+
+                  <div style={{ marginTop: 10, display: "grid", gap: 8 }}>
+                    <button
+                      type="button"
+                      style={baseButtonStyle({ hovered: hoveredBtn === "primary:listServiceOpen", disabled: false, variant: "primary" })}
+                      onMouseEnter={() => setHoveredBtn("primary:listServiceOpen")}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      onClick={() => handleOpenListTextGroup("service")}
+                    >
+                      Text Service Roles
+                    </button>
+
+                    <button
+                      type="button"
+                      style={baseButtonStyle({ hovered: hoveredBtn === "primary:listServiceCopy", disabled: false, variant: "primary" })}
+                      onMouseEnter={() => setHoveredBtn("primary:listServiceCopy")}
+                      onMouseLeave={() => setHoveredBtn(null)}
+                      onClick={() => handleCopyListTextGroup("service")}
+                    >
+                      Copy Service List
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+
+            <button
+              type="button"
+              style={baseButtonStyle({ hovered: hoveredBtn === "primary:listMarkAll", disabled: false, variant: "primary" })}
+              onMouseEnter={() => setHoveredBtn("primary:listMarkAll")}
+              onMouseLeave={() => setHoveredBtn(null)}
+              onClick={handleMarkAllListSent}
+            >
+              Mark List Sent Complete
+            </button>
           </div>
         </div>
       ) : null}

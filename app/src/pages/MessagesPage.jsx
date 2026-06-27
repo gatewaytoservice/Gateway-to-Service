@@ -46,6 +46,13 @@ export default function MessagesPage({ appState, setAppState }) {
         onChange={(v) => setMsg("reminder", v)}
       />
 
+      {/* NEW: Used for Gateway Employee / Alt Gateway Employee list communication */}
+      <MessageBox
+        title="Gateway Employee Message"
+        value={msgs.gatewayEmployee}
+        onChange={(v) => setMsg("gatewayEmployee", v)}
+      />
+
       <MessageBox
         title="First-Time Volunteer"
         value={msgs.firstTime}

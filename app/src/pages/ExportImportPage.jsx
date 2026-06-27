@@ -1,5 +1,6 @@
 // app/src/pages/ExportImportPage.jsx
 import React, { useMemo, useRef, useState } from "react";
+import { replaceState } from "../state/storage.js";
 
 /**
  * ExportImportPage.jsx (UI refresh)
@@ -22,7 +23,7 @@ import React, { useMemo, useRef, useState } from "react";
  *   - Backup File: pretty JSON → download .json file.
  * - “Take Over”:
  *   - Either paste Transfer Code OR import JSON file.
- *   - Both paths validate + ask confirmation, then setAppState(parsed) which replaces local device data.
+ *   - Both paths validate + ask confirmation, then replaceState(parsed) normalizes/saves local device data.
  */
 
 const BACKUP_PREFIX = "GTS1:"; // versioned prefix for clipboard backups
@@ -186,7 +187,8 @@ export default function ExportImportPage({ appState, setAppState }) {
         return;
       }
 
-      setAppState(parsed);
+      const normalized = replaceState(parsed);
+      setAppState(normalized);
       setStatus("Take over complete ✅ (this device is now set up)");
       e.target.value = "";
     } catch (err) {
@@ -247,7 +249,8 @@ export default function ExportImportPage({ appState, setAppState }) {
       return;
     }
 
-    setAppState(res.parsed);
+    const normalized = replaceState(res.parsed);
+    setAppState(normalized);
     setStatus("Take over complete ✅ (this device is now set up)");
     closeRestoreModal();
   }

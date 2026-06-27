@@ -53,10 +53,16 @@ const ALT_ROLE_MAP = {
   Chairperson: "Alt Chairperson",
   "Discussion Group Lead": "Alt Discussion Lead",
   "Big Book Lead": "Alt Big Book Lead",
+  "Gateway Employee": "Alt Gateway Employee",
 };
 
-// For now, we only prompt coverage checks for these three roles (your request).
-const PROMPT_REQUIRED_ROLES = ["Chairperson", "Discussion Group Lead", "Big Book Lead"];
+// Prompt coverage checks for required roles that have Alt coverage.
+const PROMPT_REQUIRED_ROLES = [
+  "Chairperson",
+  "Discussion Group Lead",
+  "Big Book Lead",
+  "Gateway Employee",
+];
 
 function isDropStatus(status) {
   return status === "Declined" || status === "No Response";

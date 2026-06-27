@@ -41,6 +41,8 @@ const ROLE_OPTIONS = [
   "Alt Discussion Lead",
   "Big Book Lead",
   "Alt Big Book Lead",
+  "Gateway Employee",
+  "Alt Gateway Employee",
 ];
 
 function getRole(v) {
@@ -1081,6 +1083,8 @@ const ROLE_SORT_PRIORITY = [
   "Alt Discussion Lead",
   "Big Book Lead",
   "Alt Big Book Lead",
+  "Gateway Employee",
+  "Alt Gateway Employee",
   "Volunteer",
 ];
 
