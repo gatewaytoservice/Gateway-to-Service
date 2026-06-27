@@ -1201,30 +1201,31 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
     };
   }
 
-  function buildGatewayEmployeeListMessage(entry, listText) {
-    const template = appState?.settings?.messages?.gatewayEmployee || "";
-
-    if (!String(template || "").trim()) {
-      return listText || "";
-    }
-
-    const filled = fillListTemplate(template, entry, listText);
-
-    // If the saved Gateway Employee message includes [List], respect that exact placement.
-    // If it does not, append the list so the facility still receives the roster.
-    if (String(template).includes("[List]")) {
-      return filled;
-    }
-
-    return `${String(filled || "").trim()}\n\n${listText || ""}`.trim();
+  function buildGatewayEmployeeListMessage(_entry, listText) {
+    // Send List workflow:
+    // Gateway Employee / Alt Gateway Employee should receive ONLY the weekly list.
+    // The saved Gateway Employee message is used for the first Invite workflow only.
+    return listText || "";
   }
 
   function buildSmsLinkForMultiple(phones, body) {
-    const to = (phones || []).map(normalizePhoneForSMS).filter(Boolean).join(",");
+    const normalizedPhones = (phones || []).map(normalizePhoneForSMS).filter(Boolean);
     const encoded = encodeURIComponent(body || "");
     const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
-    const sep = isIOS ? "&" : "?";
-    return `sms:${to}${sep}body=${encoded}`;
+
+    if (isIOS && normalizedPhones.length > 1) {
+      // iOS is more reliable with group SMS when recipients are passed through addresses.
+      const addresses = normalizedPhones.map(encodeURIComponent).join(",");
+      return `sms:/open?addresses=${addresses}&body=${encoded}`;
+    }
+
+    if (isIOS) {
+      return `sms:${normalizedPhones[0] || ""}&body=${encoded}`;
+    }
+
+    // Android handles multiple SMS recipients more reliably with semicolon separators.
+    const to = normalizedPhones.join(";");
+    return `sms:${to}?body=${encoded}`;
   }
 
   function closeListSendModal() {
@@ -2671,13 +2672,13 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
             </div>
 
             <div style={{ marginTop: 10, fontSize: 12, color: THEME.muted, lineHeight: 1.35 }}>
-              Gateway Employee receives the saved Gateway Employee message. Service roles receive the regular list text.
+              Gateway Employee receives only the weekly list here. Service roles receive the same list in one group text.
             </div>
 
             <div style={{ marginTop: 12, display: "grid", gap: 12 }}>
               {listSendModal.gatewayEntries.length ? (
                 <div style={{ border: `1px solid ${THEME.border}`, borderRadius: 12, padding: 10 }}>
-                  <div style={{ fontWeight: 950, color: THEME.navy }}>Gateway Employee Message</div>
+                  <div style={{ fontWeight: 950, color: THEME.navy }}>Gateway Employee List</div>
 
                   <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
                     {listSendModal.gatewayEntries.map((entry) => (
@@ -2722,7 +2723,7 @@ export default function CoordinatorPageV2({ appState, setAppState }) {
                       onMouseLeave={() => setHoveredBtn(null)}
                       onClick={() => handleCopyListTextGroup("gateway")}
                     >
-                      Copy Gateway Message
+                      Copy Gateway List
                     </button>
                   </div>
                 </div>
