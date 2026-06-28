@@ -728,13 +728,22 @@ export default function VolunteersPageV2({ appState, setAppState }) {
                 const scheduledTxt = formatDateFriendly(scheduledNext);
 
                 return (
-                  <div key={v.id} className="v-card" style={styles.volRow}>
+                  <div
+                    key={v.id}
+                    className="v-card"
+                    style={v.firstTime ? { ...styles.volRow, ...styles.firstTimeVolRow } : styles.volRow}
+                  >
                     {/* LEFT: clean summary + info */}
                     <div style={{ minWidth: 0 }}>
                       {/* Top line: name + status */}
                       <div style={styles.volHeaderRow}>
-                        <div style={{ fontWeight: 900, lineHeight: 1.2 }}>
-                          {v.name}{" "}
+                        <div style={styles.volNameWrap}>
+                          <span>{v.name}</span>
+
+                          {v.firstTime ? (
+                            <span style={styles.firstTimePill}>FIRST-TIME</span>
+                          ) : null}
+
                           {!v.active ? (
                             <span style={{ fontSize: 12, opacity: 0.7 }}>(Paused)</span>
                           ) : null}
@@ -838,8 +847,16 @@ export default function VolunteersPageV2({ appState, setAppState }) {
                         {v.active ? "Pause" : "Activate"}
                       </button>
 
-                      <button onClick={() => toggleFirstTime(v.id)} style={styles.smallBtn}>
-                        Toggle 1st
+                      <button
+                        onClick={() => toggleFirstTime(v.id)}
+                        style={v.firstTime ? { ...styles.smallBtn, ...styles.firstTimeToggleBtn } : styles.smallBtn}
+                        title={
+                          v.firstTime
+                            ? "This volunteer is marked as first-time."
+                            : "Mark this volunteer as first-time."
+                        }
+                      >
+                        {v.firstTime ? "First-Time: Yes" : "First-Time: No"}
                       </button>
 
                       <select
@@ -1183,11 +1200,32 @@ const styles = {
     borderRadius: 12,
     padding: 12,
   },
+  firstTimeVolRow: {
+    border: "1px solid rgba(176, 141, 44, 0.45)",
+    background: "rgba(176, 141, 44, 0.08)",
+  },
   volHeaderRow: {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
     gap: 10,
+  },
+  volNameWrap: {
+    fontWeight: 900,
+    lineHeight: 1.2,
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 8,
+  },
+  firstTimePill: {
+    fontSize: 11,
+    fontWeight: 1000,
+    letterSpacing: "0.3px",
+    padding: "4px 8px",
+    borderRadius: 999,
+    border: "1px solid rgba(176, 141, 44, 0.45)",
+    background: "rgba(176, 141, 44, 0.16)",
   },
   duePill: {
     fontSize: 12,
@@ -1266,6 +1304,10 @@ const styles = {
     fontWeight: 800,
     fontSize: 14,
     cursor: "pointer",
+  },
+  firstTimeToggleBtn: {
+    border: "1px solid rgba(176, 141, 44, 0.55)",
+    background: "rgba(176, 141, 44, 0.12)",
   },
   smallSelect: {
     padding: "10px 12px",
