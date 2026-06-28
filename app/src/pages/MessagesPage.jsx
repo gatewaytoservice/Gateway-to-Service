@@ -5,8 +5,8 @@ export default function MessagesPage({ appState, setAppState }) {
 
   /**
    * Updates one saved message in appState.settings.messages
-   * - Keeps all other settings/messages intact
-   * - Saves automatically as the user types
+   * Keeps all other settings/messages intact
+   * Saves automatically as the user types
    */
   function setMsg(key, value) {
     setAppState((prev) => ({
@@ -46,11 +46,16 @@ export default function MessagesPage({ appState, setAppState }) {
         onChange={(v) => setMsg("reminder", v)}
       />
 
-      {/* NEW: Used for Gateway Employee / Alt Gateway Employee list communication */}
       <MessageBox
         title="Gateway Employee Message"
         value={msgs.gatewayEmployee}
         onChange={(v) => setMsg("gatewayEmployee", v)}
+      />
+
+      <MessageBox
+        title="Gateway Application / Email Request"
+        value={msgs.gatewayApplicationRequest}
+        onChange={(v) => setMsg("gatewayApplicationRequest", v)}
       />
 
       <MessageBox
@@ -65,7 +70,6 @@ export default function MessagesPage({ appState, setAppState }) {
         onChange={(v) => setMsg("firstStepLeadRequest", v)}
       />
 
-      {/* NEW: Used by DashboardPage.jsx "Text" button in Consider Pausing / Check-In */}
       <MessageBox
         title="Check-In / Consider Pausing"
         value={msgs.checkIn}
@@ -77,9 +81,9 @@ export default function MessagesPage({ appState, setAppState }) {
 
 /**
  * Reusable message editor box
- * - Displays a title
- * - Shows auto-save note
- * - Uses textarea for easy message editing
+ * Displays a title
+ * Shows auto-save note
+ * Uses textarea for easy message editing
  */
 function MessageBox({ title, value, onChange }) {
   return (

@@ -31,6 +31,15 @@ export const DEFAULT_STATE = {
 
       gatewayEmployee:
         "Good afternoon [Name],\nHere is the volunteer list for the Gateway Men’s Meeting this Friday, [Date].\n\n[List]\n\nThank you.",
+
+      gatewayApplicationRequest:
+        "Hi [Name],\n\nGateway is now requiring all Friday Night Men’s Meeting volunteers to complete a volunteer application, background check, and drug test. You do not have to pay for anything.\n\nThis is a Gateway requirement so they know who is entering their facilities. If you do not want to go through this process, I completely understand.\n\nHowever, this is required in order to continue volunteering at the Friday Night Men’s AA Meeting.\n\nPlease send me your email address so I can forward it to Gateway HR. They will send you an email with the link to begin the process. Please also be on the lookout for emails from Gateway Foundation and Bloomerang.\n\nIf you have any questions, please let me know. Thank you for your service.",
+
+      firstStepLeadRequest:
+        "Hi [Name],\nWould you be willing to lead the 1st Step discussion at Gateway this Friday?\n\nPlease let me know either way. Thank you for your service 🙏🏾",
+
+      checkIn:
+        "Hi [Name],\nJust checking in with you. I noticed you have not been available recently, and I wanted to see if you would still like to stay on the Gateway volunteer list.\n\nNo pressure either way. Please let me know when you get a chance. Thank you.",
     },
   },
 
