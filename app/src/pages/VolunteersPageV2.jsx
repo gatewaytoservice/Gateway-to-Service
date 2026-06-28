@@ -172,6 +172,44 @@ function MagnifyingGlassIcon({ size = 16 }) {
   );
 }
 
+// =========================
+// ✅ Gateway Requirements Tracker
+// =========================
+const GATEWAY_REQUIREMENT_STEPS = [
+  { key: "emailRequested", label: "Email Requested" },
+  { key: "emailReceived", label: "Email Received" },
+  { key: "applicationSentToHR", label: "Application Sent to HR" },
+  { key: "backgroundCheckComplete", label: "Background Check Complete" },
+  { key: "drugTestComplete", label: "Drug Test Complete" },
+];
+
+function getGatewayRequirements(v) {
+  return v?.gatewayRequirements && typeof v.gatewayRequirements === "object"
+    ? v.gatewayRequirements
+    : {};
+}
+
+function getGatewayRequirementsCount(v) {
+  const req = getGatewayRequirements(v);
+  return GATEWAY_REQUIREMENT_STEPS.filter((step) => !!req[step.key]).length;
+}
+
+function normalizePhoneForSMS(phone) {
+  if (!phone) return "";
+  const trimmed = String(phone).trim();
+  const plus = trimmed.startsWith("+") ? "+" : "";
+  const digits = trimmed.replace(/[^\d]/g, "");
+  return plus + digits;
+}
+
+function buildSmsLink(phone, body) {
+  const to = normalizePhoneForSMS(phone);
+  const encoded = encodeURIComponent(body || "");
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  const sep = isIOS ? "&" : "?";
+  return `sms:${to}${sep}body=${encoded}`;
+}
+
 export default function VolunteersPageV2({ appState, setAppState }) {
   const fridayISO = getUpcomingFridayISO();
 
@@ -192,9 +230,30 @@ export default function VolunteersPageV2({ appState, setAppState }) {
   // ✅ NEW: search
   const [searchQuery, setSearchQuery] = useState("");
 
+  // ✅ Gateway Requirements Tracker modal
+  const [gatewayTrackerOpen, setGatewayTrackerOpen] = useState(false);
+
   const volunteers = appState.volunteers || [];
 
   const activeCount = useMemo(() => volunteers.filter((v) => v.active).length, [volunteers]);
+
+  const activeVolunteersSorted = useMemo(() => {
+    return (volunteers || [])
+      .filter((v) => v.active)
+      .slice()
+      .sort((a, b) => {
+        const ra = roleRank(getRole(a));
+        const rb = roleRank(getRole(b));
+        if (ra !== rb) return ra - rb;
+        return String(a.name || "").localeCompare(String(b.name || ""));
+      });
+  }, [volunteers]);
+
+  const gatewayRequirementsCompleteCount = useMemo(() => {
+    return activeVolunteersSorted.filter(
+      (v) => getGatewayRequirementsCount(v) === GATEWAY_REQUIREMENT_STEPS.length
+    ).length;
+  }, [activeVolunteersSorted]);
 
   // =========================
   // Edit Modal
@@ -340,13 +399,13 @@ export default function VolunteersPageV2({ appState, setAppState }) {
 
   // Lock body scroll when modal open
   useEffect(() => {
-    if (!editModal.open) return;
+    if (!editModal.open && !gatewayTrackerOpen) return;
     const prev = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     return () => {
       document.body.style.overflow = prev;
     };
-  }, [editModal.open]);
+  }, [editModal.open, gatewayTrackerOpen]);
 
   // =========================
   // Add volunteer
@@ -519,6 +578,63 @@ export default function VolunteersPageV2({ appState, setAppState }) {
     }));
   }
 
+  function setGatewayRequirementStep(volunteerId, stepKey, checked) {
+    const nowISO = new Date().toISOString();
+
+    setAppState((prev) => ({
+      ...prev,
+      volunteers: (prev.volunteers || []).map((v) => {
+        if (v.id !== volunteerId) return v;
+
+        const current = getGatewayRequirements(v);
+        return {
+          ...v,
+          gatewayRequirements: {
+            ...current,
+            [stepKey]: !!checked,
+            [`${stepKey}At`]: checked ? current[`${stepKey}At`] || nowISO : null,
+            updatedAt: nowISO,
+          },
+        };
+      }),
+    }));
+  }
+
+  function markEmailRequested(volunteerId) {
+    setGatewayRequirementStep(volunteerId, "emailRequested", true);
+  }
+
+  function buildGatewayApplicationMessage(v) {
+    const template = appState?.settings?.messages?.gatewayApplicationRequest || "";
+    return String(template || "").replaceAll("[Name]", v?.name || "");
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      console.error("Copy failed", e);
+      alert("Copy failed. You can still open the text app instead.");
+    }
+  }
+
+  function textGatewayApplicationRequest(v) {
+    if (!v?.phone) {
+      alert("This volunteer does not have a phone number saved.");
+      return;
+    }
+
+    const message = buildGatewayApplicationMessage(v);
+    markEmailRequested(v.id);
+    window.location.href = buildSmsLink(v.phone, message);
+  }
+
+  async function copyGatewayApplicationRequest(v) {
+    const message = buildGatewayApplicationMessage(v);
+    await copyText(message);
+    markEmailRequested(v.id);
+  }
+
   // =========================
   // ✅ NEW: filtered volunteers
   // Notes:
@@ -576,6 +692,30 @@ export default function VolunteersPageV2({ appState, setAppState }) {
         <div style={{ marginTop: 8, fontSize: 12, opacity: 0.8 }}>
           Showing <b>{filteredVolunteers.length}</b> of <b>{volunteers.length}</b>
         </div>
+      </section>
+
+      {/* Gateway Requirements Tracker */}
+      <section style={styles.card}>
+        <div style={styles.row}>
+          <div>
+            <div style={{ fontWeight: 900 }}>Gateway Requirements Tracker</div>
+            <div style={{ marginTop: 4, fontSize: 12, opacity: 0.8, lineHeight: 1.35 }}>
+              Track application, email, background check, and drug test progress.
+            </div>
+          </div>
+
+          <div style={{ fontSize: 12, opacity: 0.8, textAlign: "right" }}>
+            Complete: {gatewayRequirementsCompleteCount} / {activeVolunteersSorted.length}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setGatewayTrackerOpen(true)}
+          style={{ ...styles.primaryBtn, marginTop: 10 }}
+        >
+          Open Gateway Requirements Tracker
+        </button>
       </section>
 
       {/* Add Volunteer */}
@@ -933,6 +1073,90 @@ export default function VolunteersPageV2({ appState, setAppState }) {
           </div>
         )}
       </section>
+
+      {/* GATEWAY REQUIREMENTS TRACKER MODAL */}
+      {gatewayTrackerOpen ? (
+        <div style={styles.modalBackdrop} onClick={() => setGatewayTrackerOpen(false)}>
+          <div style={styles.modalCardWide} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <div>
+                <div style={{ fontWeight: 900 }}>Gateway Requirements Tracker</div>
+                <div style={{ marginTop: 4, fontSize: 12, opacity: 0.75, lineHeight: 1.35 }}>
+                  Send the application request message and track each volunteer’s Gateway requirements.
+                </div>
+              </div>
+
+              <button onClick={() => setGatewayTrackerOpen(false)} style={styles.modalCloseBtn}>
+                Close
+              </button>
+            </div>
+
+            <div style={{ marginTop: 12, display: "grid", gap: 10 }}>
+              {activeVolunteersSorted.length === 0 ? (
+                <div style={{ opacity: 0.75 }}>No active volunteers found.</div>
+              ) : (
+                activeVolunteersSorted.map((v) => {
+                  const req = getGatewayRequirements(v);
+                  const doneCount = getGatewayRequirementsCount(v);
+                  const phoneFmt = formatPhoneUS(v.phone);
+
+                  return (
+                    <div key={v.id} style={styles.trackerRow}>
+                      <div style={styles.trackerHeader}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 950, lineHeight: 1.2 }}>
+                            {v.name}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, opacity: 0.8 }}>
+                            {phoneFmt || v.phone || "No phone saved"}
+                          </div>
+                          <div style={{ marginTop: 4, fontSize: 12, opacity: 0.8 }}>
+                            {getRole(v)} • {doneCount}/{GATEWAY_REQUIREMENT_STEPS.length} complete
+                          </div>
+                        </div>
+
+                        <div style={styles.trackerActions}>
+                          <button
+                            type="button"
+                            onClick={() => textGatewayApplicationRequest(v)}
+                            style={styles.smallBtn}
+                          >
+                            Text Application Request
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => copyGatewayApplicationRequest(v)}
+                            style={styles.smallBtn}
+                          >
+                            Copy Message
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={styles.requirementGrid}>
+                        {GATEWAY_REQUIREMENT_STEPS.map((step) => (
+                          <label key={step.key} style={styles.requirementCheck}>
+                            <input
+                              type="checkbox"
+                              checked={!!req[step.key]}
+                              onChange={(e) =>
+                                setGatewayRequirementStep(v.id, step.key, e.target.checked)
+                              }
+                            />
+                            <span>
+                              {step.label} {req[step.key] ? "✅" : ""}
+                            </span>
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* EDIT MODAL */}
       {editModal.open ? (
@@ -1359,6 +1583,51 @@ const styles = {
     borderRadius: 14,
     border: "1px solid rgba(0,0,0,0.12)",
     padding: 14,
+  },
+  modalCardWide: {
+    width: "min(860px, calc(100vw - 28px))",
+    maxHeight: "calc(100vh - 28px)",
+    overflowY: "auto",
+    WebkitOverflowScrolling: "touch",
+    background: "white",
+    borderRadius: 14,
+    border: "1px solid rgba(0,0,0,0.12)",
+    padding: 14,
+  },
+  trackerRow: {
+    border: "1px solid rgba(0,0,0,0.10)",
+    borderRadius: 12,
+    padding: 12,
+    background: "rgba(0,0,0,0.02)",
+  },
+  trackerHeader: {
+    display: "flex",
+    gap: 12,
+    justifyContent: "space-between",
+    alignItems: "flex-start",
+  },
+  trackerActions: {
+    display: "grid",
+    gap: 8,
+    minWidth: 210,
+  },
+  requirementGrid: {
+    marginTop: 10,
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(190px, 1fr))",
+    gap: 8,
+  },
+  requirementCheck: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "8px 10px",
+    borderRadius: 12,
+    border: "1px solid rgba(0,0,0,0.10)",
+    background: "white",
+    fontWeight: 800,
+    fontSize: 13,
+    lineHeight: 1.25,
   },
   modalHeader: {
     display: "flex",
