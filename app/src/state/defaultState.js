@@ -35,6 +35,27 @@ export const DEFAULT_STATE = {
       gatewayApplicationRequest:
         "Hi [Name],\n\nGateway is now requiring all Friday Night Men’s Meeting volunteers to complete a volunteer application, background check, and drug test. You do not have to pay for anything.\n\nThis is a Gateway requirement so they know who is entering their facilities. If you do not want to go through this process, I completely understand.\n\nHowever, this is required in order to continue volunteering at the Friday Night Men’s AA Meeting.\n\nPlease send me your email address so I can forward it to Gateway HR. They will send you an email with the link to begin the process. Please also be on the lookout for emails from Gateway Foundation and Bloomerang.\n\nIf you have any questions, please let me know. Thank you for your service.",
 
+      gatewayEmailReceivedFollowUp:
+        "Hi [Name],\n\nJust checking to see if you received the email from Gateway HR with the volunteer application, background check, and drug test instructions.\n\nPlease let me know when you get a chance. Thank you.",
+
+      gatewayApplicationSentToHR:
+        "Hi [Name],\n\nThank you for sending me your email. I sent it to Gateway HR, so please be on the lookout for an email from Gateway Foundation or Bloomerang with the next steps.\n\nThank you for your service.",
+
+      gatewayBackgroundCheckFollowUp:
+        "Hi [Name],\n\nJust checking to see if you were able to complete the background check from Gateway.\n\nPlease let me know when you get a chance. Thank you.",
+
+      gatewayDrugTestFollowUp:
+        "Hi [Name],\n\nJust checking to see if you were able to complete the drug test requirement from Gateway.\n\nPlease let me know when you get a chance. Thank you.",
+
+      gatewayMissingStepReminder:
+        "Hi [Name],\n\nJust checking in. It looks like there may still be one Gateway requirement left to complete.\n\nPlease let me know where you are in the process when you have a chance. Thank you.",
+
+      gatewayProcessCheckIn:
+        "Hi [Name],\n\nI am just checking in to see where you are in the Gateway volunteer requirement process.\n\nPlease let me know if you received the email, completed the application, background check, or drug test. Thank you.",
+
+      gatewayRequirementsComplete:
+        "Hi [Name],\n\nThank you for completing the Gateway volunteer requirements.\n\nI appreciate your service and willingness to help with the Friday Night Men’s Meeting.",
+
       firstStepLeadRequest:
         "Hi [Name],\nWould you be willing to lead the 1st Step discussion at Gateway this Friday?\n\nPlease let me know either way. Thank you for your service 🙏🏾",
 
